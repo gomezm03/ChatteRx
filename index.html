@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14171C">
+<title>ChatteRx — Cut Audio Analyzer</title>
+<meta name="description" content="Live audio spectrum and peak analysis for milling cut sounds.">
+<link rel="manifest" href="./manifest.json">
+<link rel="icon" href="./icon-192.png">
+<link rel="apple-touch-icon" href="./icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ChatteRx">
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-name">Chatte<span class="brand-rx">Rx</span></span>
+    <span class="brand-sub">cut audio analyzer</span>
+  </div>
+  <div class="status" id="status">
+    <span class="status-dot" id="statusDot"></span>
+    <span id="statusText">idle</span>
+  </div>
+</header>
+
+<main class="app">
+
+  <!-- Dominant peak readout, styled like a machine DRO -->
+  <section class="readout" aria-live="polite">
+    <div class="readout-main">
+      <span class="readout-value" id="peakFreq">----</span>
+      <span class="readout-unit">Hz</span>
+    </div>
+    <div class="readout-row">
+      <span class="readout-label">DOMINANT PEAK</span>
+      <span class="readout-db"><span id="peakDb">--</span> dB</span>
+    </div>
+  </section>
+
+  <!-- Live spectrum -->
+  <section class="panel">
+    <div class="panel-head">
+      <span class="panel-title">SPECTRUM</span>
+      <label class="range-ctl">
+        <span>range</span>
+        <select id="rangeSelect">
+          <option value="2000">0–2 kHz</option>
+          <option value="5000" selected>0–5 kHz</option>
+          <option value="10000">0–10 kHz</option>
+        </select>
+      </label>
+    </div>
+    <canvas id="spectrum" class="scope-canvas" height="190"></canvas>
+  </section>
+
+  <!-- Scrolling spectrogram -->
+  <section class="panel">
+    <div class="panel-head">
+      <span class="panel-title">SPECTROGRAM</span>
+      <span class="panel-note">time →</span>
+    </div>
+    <canvas id="spectrogram" class="scope-canvas" height="210"></canvas>
+  </section>
+
+  <!-- Peak table -->
+  <section class="panel">
+    <div class="panel-head">
+      <span class="panel-title">PEAKS</span>
+      <span class="panel-note">top 5 by level</span>
+    </div>
+    <table class="peaks" id="peakTable">
+      <thead>
+        <tr><th>#</th><th>Frequency</th><th>Level</th></tr>
+      </thead>
+      <tbody id="peakBody">
+        <tr class="empty-row"><td colspan="3">Start listening to detect peaks.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <p class="error" id="errorMsg" hidden></p>
+
+</main>
+
+<!-- Primary control -->
+<div class="controls">
+  <button id="toggleBtn" class="btn-start">START LISTENING</button>
+</div>
+
+<!-- iOS add-to-home-screen hint -->
+<div class="ios-hint" id="iosHint" hidden>
+  <p>Install this app: tap <strong>Share</strong> <span class="share-glyph">&#x2BAD;</span> then <strong>Add&nbsp;to&nbsp;Home&nbsp;Screen</strong>.</p>
+  <button id="iosHintClose" aria-label="Dismiss">✕</button>
+</div>
+
+<script src="./app.js"></script>
+</body>
+</html>

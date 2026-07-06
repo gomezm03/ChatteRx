@@ -1,0 +1,354 @@
+/* ============================================================
+   CHATTERX — instrument-panel styling
+   Palette
+     bg        #14171C  gunmetal housing
+     panel     #1D222A  recessed display bezel
+     line      #2C333E  engraved seams
+     trace     #FFB24D  phosphor amber (spectrum trace, readout)
+     marker    #7FD8E8  peak marker cyan
+     text      #E8E6E0  panel lettering
+     muted     #8A919C  secondary labels
+   ============================================================ */
+
+:root {
+  --bg: #14171C;
+  --panel: #1D222A;
+  --panel-deep: #10141A;
+  --line: #2C333E;
+  --trace: #FFB24D;
+  --marker: #7FD8E8;
+  --text: #E8E6E0;
+  --muted: #8A919C;
+  --danger: #E86A5F;
+  --mono: ui-monospace, "SF Mono", "Roboto Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  min-height: 100vh;
+  padding-bottom: calc(96px + env(safe-area-inset-bottom));
+}
+
+/* ---------- top bar ---------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: calc(14px + env(safe-area-inset-top)) 18px 12px;
+  border-bottom: 1px solid var(--line);
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.brand-name {
+  font-family: var(--mono);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text);
+}
+
+.brand-rx { color: var(--trace); }
+
+.brand-sub {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #4A5261;
+}
+
+.status.live .status-dot {
+  background: var(--trace);
+  box-shadow: 0 0 8px var(--trace);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.status.live { color: var(--trace); }
+
+@keyframes pulse {
+  50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status.live .status-dot { animation: none; }
+}
+
+/* ---------- layout ---------- */
+
+.app {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 16px 14px 0;
+  display: grid;
+  gap: 14px;
+}
+
+/* ---------- DRO readout ---------- */
+
+.readout {
+  background: var(--panel-deep);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px 18px 12px;
+}
+
+.readout-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.readout-value {
+  font-family: var(--mono);
+  font-size: clamp(44px, 13vw, 64px);
+  font-weight: 700;
+  line-height: 1;
+  color: var(--trace);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 18px rgba(255, 178, 77, 0.25);
+}
+
+.readout-unit {
+  font-family: var(--mono);
+  font-size: 20px;
+  color: var(--muted);
+}
+
+.readout-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.readout-label {
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: var(--muted);
+}
+
+.readout-db {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- panels ---------- */
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.panel-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  color: var(--muted);
+}
+
+.panel-note {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.scope-canvas {
+  display: block;
+  width: 100%;
+  background: var(--panel-deep);
+}
+
+/* range selector */
+
+.range-ctl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.range-ctl select {
+  background: var(--panel-deep);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 3px 6px;
+}
+
+/* ---------- peak table ---------- */
+
+.peaks {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.peaks th {
+  text-align: left;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.peaks td {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.peaks tbody tr:last-child td { border-bottom: none; }
+
+.peaks .rank { color: var(--muted); }
+.peaks .freq { color: var(--trace); }
+.peaks tr.top .freq { text-shadow: 0 0 10px rgba(255, 178, 77, 0.3); }
+
+.empty-row td {
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 13px;
+  text-align: center;
+  padding: 18px;
+}
+
+/* ---------- controls ---------- */
+
+.controls {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 12px 14px calc(14px + env(safe-area-inset-bottom));
+  background: linear-gradient(to top, var(--bg) 65%, transparent);
+  display: flex;
+  justify-content: center;
+}
+
+.btn-start,
+.btn-stop {
+  width: 100%;
+  max-width: 612px;
+  padding: 16px;
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.btn-start {
+  background: var(--trace);
+  color: #1A1205;
+}
+
+.btn-stop {
+  background: transparent;
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.btn-start:active { filter: brightness(0.9); }
+.btn-stop:active { background: rgba(232, 106, 95, 0.12); }
+
+button:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--marker);
+  outline-offset: 2px;
+}
+
+/* ---------- error ---------- */
+
+.error {
+  color: var(--danger);
+  font-size: 13px;
+  padding: 0 4px;
+  margin: 0;
+}
+
+/* ---------- iOS install hint ---------- */
+
+.ios-hint {
+  position: fixed;
+  left: 14px;
+  right: 14px;
+  bottom: calc(88px + env(safe-area-inset-bottom));
+  max-width: 612px;
+  margin: 0 auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 40px 12px 14px;
+  font-size: 13px;
+  color: var(--text);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.ios-hint p { margin: 0; }
+
+.ios-hint .share-glyph { color: var(--marker); }
+
+.ios-hint button {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 15px;
+  padding: 6px;
+  cursor: pointer;
+}
