@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#14171C">
 <title>ChatteRx — Cut Audio Analyzer</title>
-<meta name="description" content="Live audio spectrum and peak analysis for milling cut sounds.">
+<meta name="description" content="Live audio spectrum, peak analysis, and session replay for milling cut sounds.">
 <link rel="manifest" href="./manifest.json">
 <link rel="icon" href="./icon-192.png">
 <link rel="apple-touch-icon" href="./icon-192.png">
@@ -19,7 +19,6 @@
 <header class="topbar">
   <div class="brand">
     <span class="brand-name">Chatte<span class="brand-rx">Rx</span></span>
-    <span class="brand-sub">cut audio analyzer</span>
   </div>
   <div class="status" id="status">
     <span class="status-dot" id="statusDot"></span>
@@ -27,22 +26,22 @@
   </div>
 </header>
 
-<main class="app">
+<main class="app" id="app" data-mode="idle">
 
-  <!-- Dominant peak readout, styled like a machine DRO -->
+  <!-- Dominant peak readout -->
   <section class="readout" aria-live="polite">
     <div class="readout-main">
       <span class="readout-value" id="peakFreq">----</span>
       <span class="readout-unit">Hz</span>
     </div>
-    <div class="readout-row">
-      <span class="readout-label">DOMINANT PEAK</span>
+    <div class="readout-side">
+      <span class="readout-label">DOMINANT<br>PEAK</span>
       <span class="readout-db"><span id="peakDb">--</span> dB</span>
     </div>
   </section>
 
-  <!-- Live spectrum -->
-  <section class="panel">
+  <!-- Live spectrum / playhead spectrum -->
+  <section class="panel panel-spectrum">
     <div class="panel-head">
       <span class="panel-title">SPECTRUM</span>
       <label class="range-ctl">
@@ -54,46 +53,49 @@
         </select>
       </label>
     </div>
-    <canvas id="spectrum" class="scope-canvas" height="190"></canvas>
+    <div class="panel-body">
+      <canvas id="spectrum" class="scope-canvas"></canvas>
+    </div>
   </section>
 
-  <!-- Scrolling spectrogram -->
-  <section class="panel">
+  <!-- Live spectrogram / session timeline -->
+  <section class="panel panel-gram">
     <div class="panel-head">
-      <span class="panel-title">SPECTROGRAM</span>
-      <span class="panel-note">time →</span>
+      <span class="panel-title" id="gramTitle">SPECTROGRAM</span>
+      <span class="panel-note" id="gramNote">time →</span>
     </div>
-    <canvas id="spectrogram" class="scope-canvas" height="210"></canvas>
+    <div class="panel-body">
+      <canvas id="spectrogram" class="scope-canvas"></canvas>
+      <div class="processing" id="processing" hidden>building timeline…</div>
+    </div>
+    <!-- Review transport, lives with the timeline -->
+    <div class="transport" id="transport" hidden>
+      <button id="playBtn" class="t-btn t-play" aria-label="Play">▶</button>
+      <span class="t-time" id="timeLabel">0:00 / 0:00</span>
+      <button id="exportBtn" class="t-btn t-export">EXPORT .WAV</button>
+    </div>
   </section>
 
-  <!-- Peak table -->
-  <section class="panel">
-    <div class="panel-head">
-      <span class="panel-title">PEAKS</span>
-      <span class="panel-note">top 5 by level</span>
+  <!-- Peaks as a compact chip strip -->
+  <section class="chips-row">
+    <span class="chips-label">PEAKS</span>
+    <div class="chips" id="peakChips">
+      <span class="chip chip-empty">start listening to detect peaks</span>
     </div>
-    <table class="peaks" id="peakTable">
-      <thead>
-        <tr><th>#</th><th>Frequency</th><th>Level</th></tr>
-      </thead>
-      <tbody id="peakBody">
-        <tr class="empty-row"><td colspan="3">Start listening to detect peaks.</td></tr>
-      </tbody>
-    </table>
   </section>
 
   <p class="error" id="errorMsg" hidden></p>
 
-</main>
+  <!-- Primary control -->
+  <div class="controls">
+    <button id="toggleBtn" class="btn-main btn-start">START LISTENING</button>
+  </div>
 
-<!-- Primary control -->
-<div class="controls">
-  <button id="toggleBtn" class="btn-start">START LISTENING</button>
-</div>
+</main>
 
 <!-- iOS add-to-home-screen hint -->
 <div class="ios-hint" id="iosHint" hidden>
-  <p>Install this app: tap <strong>Share</strong> <span class="share-glyph">&#x2BAD;</span> then <strong>Add&nbsp;to&nbsp;Home&nbsp;Screen</strong>.</p>
+  <p>Install this app: tap <strong>Share</strong> then <strong>Add&nbsp;to&nbsp;Home&nbsp;Screen</strong>.</p>
   <button id="iosHintClose" aria-label="Dismiss">✕</button>
 </div>
 
