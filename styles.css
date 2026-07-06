@@ -21,6 +21,10 @@
 
 * { box-sizing: border-box; }
 
+/* The hidden attribute must always win, even over display:flex rules
+   (used by the processing overlay and the review transport bar). */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   padding: 0;
