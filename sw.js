@@ -2,7 +2,7 @@
    Bump CACHE_VERSION whenever you deploy changed files so clients
    pick up the new build on their next load. */
 
-const CACHE_VERSION = "chatterx-v11";
+const CACHE_VERSION = "chatterx-v12";
 
 const ASSETS = [
   "./",
