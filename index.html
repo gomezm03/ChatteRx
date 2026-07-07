@@ -111,30 +111,28 @@
     </div>
     <div class="form-body">
       <div class="form-grid">
-        <label>Preset
+        <label class="span-2"><span class="lab">Preset</span>
           <select id="cfcPreset" aria-label="Coefficient preset"></select></label>
       </div>
       <div class="form-grid">
-        <label>K<sub>tc</sub> <span class="unit">(N/mm²)</span>
+        <label><span class="lab">K<sub>tc</sub> <span class="unit">(N/mm²)</span></span>
           <input id="cKtc" type="number" step="any" inputmode="decimal"></label>
-        <label>K<sub>rc</sub> <span class="unit">(N/mm²)</span>
+        <label><span class="lab">K<sub>rc</sub> <span class="unit">(N/mm²)</span></span>
           <input id="cKrc" type="number" step="any" inputmode="decimal"></label>
       </div>
       <details class="more" id="cfcMore">
-        <summary class="more-toggle">
+        <summary class="more-toggle" aria-label="Show more coefficients">
           <span class="chev">▸</span>
-          <span class="more-closed">More coefficients</span>
-          <span class="more-open">Fewer coefficients</span>
         </summary>
         <div class="more-body">
           <div class="form-grid">
-            <label>K<sub>ac</sub> <span class="unit">(N/mm²)</span>
+            <label><span class="lab">K<sub>ac</sub> <span class="unit">(N/mm²)</span></span>
               <input id="cKac" type="number" step="any" inputmode="decimal"></label>
-            <label>K<sub>te</sub> <span class="unit">(N/mm)</span>
+            <label><span class="lab">K<sub>te</sub> <span class="unit">(N/mm)</span></span>
               <input id="cKte" type="number" step="any" inputmode="decimal"></label>
-            <label>K<sub>re</sub> <span class="unit">(N/mm)</span>
+            <label><span class="lab">K<sub>re</sub> <span class="unit">(N/mm)</span></span>
               <input id="cKre" type="number" step="any" inputmode="decimal"></label>
-            <label>K<sub>ae</sub> <span class="unit">(N/mm)</span>
+            <label><span class="lab">K<sub>ae</sub> <span class="unit">(N/mm)</span></span>
               <input id="cKae" type="number" step="any" inputmode="decimal"></label>
           </div>
           <div class="form-actions">
@@ -151,20 +149,20 @@
     <div class="panel-head"><span class="panel-title">OPERATING POINT</span></div>
     <div class="form-body">
       <div class="form-grid">
-        <label>Spindle speed <span class="unit">(rpm)</span>
+        <label><span class="lab">Spindle speed <span class="unit">(rpm)</span></span>
           <input id="sOmega" type="number" step="any" inputmode="decimal" value="7500"></label>
-        <label>Axial depth b <span class="unit">(mm)</span>
+        <label><span class="lab">Axial depth <span class="unit">(mm)</span></span>
           <input id="sB" type="number" step="any" inputmode="decimal" value="2"></label>
-        <label>Radial depth <span class="unit">(mm)</span>
+        <label><span class="lab">Radial depth <span class="unit">(mm)</span></span>
           <input id="sRd" type="number" step="any" inputmode="decimal" value="3.175"></label>
-        <label>Feed/tooth <span class="unit">(mm)</span>
+        <label><span class="lab">Feed/tooth <span class="unit">(mm)</span></span>
           <input id="sFt" type="number" step="any" inputmode="decimal" value="0.1"></label>
-        <label>Direction
+        <label><span class="lab">Direction</span>
           <select id="sUd">
             <option value="2" selected>Down milling</option>
             <option value="1">Up milling</option>
           </select></label>
-        <label>Simulation time <span class="unit">(s)</span>
+        <label><span class="lab">Simulation time <span class="unit">(s)</span></span>
           <input id="sTime" type="number" step="any" min="0.5" inputmode="decimal" value="3"></label>
       </div>
       <p class="form-note">Radial depth equal to the diameter is a slotting cut. The second half of the record is treated as steady state for the metric and the audio.</p>
@@ -176,11 +174,11 @@
     <div class="panel-head"><span class="panel-title">TOOL</span></div>
     <div class="form-body">
       <div class="form-grid">
-        <label>Teeth N<sub>t</sub> <span class="unit">(–)</span>
+        <label><span class="lab">Teeth</span>
           <input id="sNt" type="number" step="1" min="1" inputmode="numeric" value="4"></label>
-        <label>Diameter d <span class="unit">(mm)</span>
+        <label><span class="lab">Diameter <span class="unit">(mm)</span></span>
           <input id="sD" type="number" step="any" inputmode="decimal" value="12.7"></label>
-        <label>Helix angle β <span class="unit">(deg)</span>
+        <label><span class="lab">Helix angle <span class="unit">(deg)</span></span>
           <input id="sBeta" type="number" step="any" inputmode="decimal" value="30"></label>
       </div>
     </div>
@@ -250,9 +248,9 @@
         <div class="sim-plot-head">
           <span class="plot-title">FORCE (N) — steady state</span>
           <select id="forceChan" class="head-select" aria-label="Force channel">
-            <option value="fx" selected>Fx</option>
+            <option value="res" selected>Resultant</option>
+            <option value="fx">Fx</option>
             <option value="fy">Fy</option>
-            <option value="res">Resultant</option>
           </select>
           <span class="plot-stat" id="forceStats"></span>
         </div>
