@@ -29,6 +29,7 @@
 <nav class="tabs">
   <button class="tab active" id="tabBtnAnalyze" data-tab="analyze">ANALYZE</button>
   <button class="tab" id="tabBtnSim" data-tab="sim">SIMULATE</button>
+  <button class="tab" id="tabBtnSettings" data-tab="settings">SETTINGS</button>
 </nav>
 
 <main class="app">
@@ -43,7 +44,7 @@
     </div>
     <div class="readout-side">
       <span class="readout-label">DOMINANT<br>PEAK</span>
-      <span class="readout-db"><span id="peakDb">--</span> dB</span>
+      <span class="readout-db"><span id="peakDb">--</span> <span id="dbUnit">dB</span></span>
     </div>
   </section>
 
@@ -76,7 +77,8 @@
     <div class="transport" id="transport" hidden>
       <button id="playBtn" class="t-btn t-play" aria-label="Play">▶</button>
       <span class="t-time" id="timeLabel">0:00 / 0:00</span>
-      <button id="exportBtn" class="t-btn t-export">EXPORT .WAV</button>
+      <button id="modeBtn" class="t-btn t-mode" aria-label="Toggle scrub or select mode">SCRUB</button>
+      <button id="exportBtn" class="t-btn t-export">.WAV</button>
     </div>
   </section>
 
@@ -264,6 +266,7 @@
         </div>
         <canvas id="soundPlot" class="sim-canvas"></canvas>
       </div>
+      <p class="form-note">Drag across a plot to zoom in; double-tap to reset.</p>
 
       <div class="form-actions">
         <button id="playSimBtn" class="mini-btn mini-play">▶ PLAY</button>
@@ -272,6 +275,59 @@
       <p class="form-note">Play previews the sound right here. Analyzing in the Analyzer is optional — it opens the signal in the session timeline for scrubbing, spectrum inspection, and .wav export.</p>
     </div>
   </section>
+
+</div>
+</section>
+
+<!-- ======================= SETTINGS TAB ======================= -->
+<section class="tab-panel tab-sim" id="tab-settings" hidden>
+<div class="sim-scroll">
+
+  <section class="panel form-panel">
+    <div class="panel-head"><span class="panel-title">SPECTRUM DISPLAY</span></div>
+    <div class="form-body">
+      <div class="form-grid">
+        <label class="span-2"><span class="lab">Scale</span>
+          <select id="setScale">
+            <option value="amp" selected>FFT amplitude (dB)</option>
+            <option value="psd">Power spectral density (dB/Hz)</option>
+          </select></label>
+        <label class="span-2"><span class="lab">Live smoothing <span class="unit">(0–0.9)</span></span>
+          <input id="setSmooth" type="number" step="0.05" min="0" max="0.9" inputmode="decimal"></label>
+      </div>
+      <p class="form-note">Smoothing averages successive live FFT frames for a steadier trace; it does not affect recordings or review.</p>
+    </div>
+  </section>
+
+  <section class="panel form-panel">
+    <div class="panel-head"><span class="panel-title">PEAK DETECTION</span></div>
+    <div class="form-body">
+      <div class="form-grid">
+        <label><span class="lab">Peaks shown</span>
+          <input id="setMaxPeaks" type="number" step="1" min="1" max="8" inputmode="numeric"></label>
+        <label><span class="lab">Threshold <span class="unit">(dB above floor)</span></span>
+          <input id="setThresh" type="number" step="1" min="3" max="40" inputmode="numeric"></label>
+        <label><span class="lab">Min separation <span class="unit">(Hz)</span></span>
+          <input id="setMinSep" type="number" step="1" min="0" inputmode="numeric"></label>
+      </div>
+      <p class="form-note">Applies to the live spectrum and the review playhead spectrum.</p>
+    </div>
+  </section>
+
+  <section class="panel form-panel">
+    <div class="panel-head"><span class="panel-title">STABILITY ANALYSIS</span></div>
+    <div class="form-body">
+      <div class="form-grid">
+        <label><span class="lab">Scan band min <span class="unit">(Hz)</span></span>
+          <input id="setScanMin" type="number" step="1" min="10" inputmode="numeric"></label>
+        <label><span class="lab">Scan band max <span class="unit">(Hz)</span></span>
+          <input id="setScanMax" type="number" step="1" min="100" inputmode="numeric"></label>
+      </div>
+      <p class="form-note">Frequency range for the periodic-sampling scan used by the upcoming stability engine. Kept wide by default.</p>
+    </div>
+  </section>
+
+  <button id="resetSettingsBtn" class="btn-main btn-new">RESET TO DEFAULTS</button>
 
 </div>
 </section>

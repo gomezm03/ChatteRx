@@ -13,13 +13,22 @@
 
   // ---------- config ----------
   const FFT_SIZE_LIVE = 4096;
-  const SMOOTHING = 0.55;
   const MIN_DB = -100;
   const MAX_DB = -10;
-  const MAX_PEAKS = 5;
-  const PEAK_MIN_SEP_HZ = 60;
-  const PEAK_ABOVE_FLOOR_DB = 12;
   const UI_UPDATE_MS = 250;
+
+  // user settings (Settings tab), persisted
+  const SETTINGS_KEY = "chatterx-settings-v1";
+  const DEFAULT_SETTINGS = {
+    scale: "amp",     // "amp" (dB) | "psd" (dB/Hz)
+    smooth: 0.55,     // live analyser time smoothing
+    maxPeaks: 5,
+    thresh: 12,       // dB above adaptive floor
+    minSep: 60,       // Hz between reported peaks
+    scanMin: 100,     // Hz, periodic-sampling scan band (stability engine)
+    scanMax: 10000,
+  };
+  let settings = Object.assign({}, DEFAULT_SETTINGS);
 
   const MAX_REC_SECONDS = 300;
   const FFT_SIZE_REC = 2048;
@@ -59,6 +68,9 @@
   let playhead = 0;
   let playStartCtxTime = 0;
   let playStartOffset = 0;
+  let gramView = { a: 0, b: 1 };        // visible fraction of the session
+  let selection = null;                  // { a, b } fractions — analysis range
+  let interactMode = "scrub";            // "scrub" | "select"
 
   // ---------- elements ----------
   const $ = (id) => document.getElementById(id);
@@ -69,6 +81,8 @@
   const statusText = $("statusText");
   const peakFreqEl = $("peakFreq");
   const peakDbEl = $("peakDb");
+  const dbUnitEl = $("dbUnit");
+  const modeBtn = $("modeBtn");
   const peakChips = $("peakChips");
   const errorMsg = $("errorMsg");
   const rangeSelect = $("rangeSelect");
@@ -135,12 +149,14 @@
 
   const tabAnalyze = $("tab-analyze");
   const tabSim = $("tab-sim");
+  const tabSettings = $("tab-settings");
   const tabBtns = document.querySelectorAll(".tab");
 
   function switchTab(name) {
     tabBtns.forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
     tabAnalyze.hidden = name !== "analyze";
     tabSim.hidden = name !== "sim";
+    tabSettings.hidden = name !== "settings";
     if (name === "analyze") {
       requestAnimationFrame(() => {
         fitCanvas(specCanvas, specCtx, false);
@@ -180,7 +196,7 @@
 
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = FFT_SIZE_LIVE;
-    analyser.smoothingTimeConstant = SMOOTHING;
+    analyser.smoothingTimeConstant = settings.smooth;
     analyser.minDecibels = MIN_DB;
     analyser.maxDecibels = MAX_DB;
 
@@ -325,7 +341,7 @@
     if (band.length === 0) return [];
     band.sort((a, b) => a - b);
     const floor = band[band.length >> 1];
-    const threshold = floor + PEAK_ABOVE_FLOOR_DB;
+    const threshold = floor + settings.thresh;
 
     const candidates = [];
     for (let i = Math.max(startBin, 2); i < maxBin - 2; i++) {
@@ -346,10 +362,10 @@
 
     const selected = [];
     for (const p of candidates) {
-      if (selected.every((s) => Math.abs(s.freq - p.freq) > PEAK_MIN_SEP_HZ)) {
+      if (selected.every((s) => Math.abs(s.freq - p.freq) > settings.minSep)) {
         selected.push(p);
       }
-      if (selected.length >= MAX_PEAKS) break;
+      if (selected.length >= settings.maxPeaks) break;
     }
     return selected;
   }
@@ -390,6 +406,9 @@
     processingEl.hidden = true;
 
     playhead = 0;
+    gramView = { a: 0, b: 1 };
+    selection = null;
+    updateGramNote();
     drawTimeline();
     drawReviewSpectrum();
     updateTimeLabel();
@@ -467,7 +486,7 @@
     return recBuffer ? recBuffer.length / recRate : 0;
   }
 
-  function drawTimeline() {
+  function drawTimeline(dragSel) {
     if (!gramImage || !gram) return;
     const w = gramCanvas.clientWidth;
     const h = gramCanvas.clientHeight;
@@ -480,23 +499,52 @@
       gram.bins
     );
     const srcTop = gram.bins - shownBins;
+    const c0 = Math.floor(gramView.a * gram.cols);
+    const c1 = Math.max(c0 + 1, Math.ceil(gramView.b * gram.cols));
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(gramImage, 0, srcTop, gram.cols, shownBins, 0, 0, w, h);
+    ctx.drawImage(gramImage, c0, srcTop, c1 - c0, shownBins, 0, 0, w, h);
 
-    const x = (playhead / duration()) * w;
-    ctx.strokeStyle = "#7FD8E8";
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, h);
-    ctx.stroke();
-    ctx.fillStyle = "#7FD8E8";
-    ctx.beginPath();
-    ctx.moveTo(x - 5, 0);
-    ctx.lineTo(x + 5, 0);
-    ctx.lineTo(x, 7);
-    ctx.closePath();
-    ctx.fill();
+    const fracToX = (f) => ((f - gramView.a) / (gramView.b - gramView.a)) * w;
+
+    // stored analysis range, shown when it isn't the whole view
+    if (selection && (selection.a > gramView.a + 1e-6 || selection.b < gramView.b - 1e-6)) {
+      const sx0 = Math.max(0, fracToX(selection.a));
+      const sx1 = Math.min(w, fracToX(selection.b));
+      if (sx1 > sx0) {
+        ctx.fillStyle = "rgba(127, 216, 232, 0.13)";
+        ctx.fillRect(sx0, 0, sx1 - sx0, h);
+        ctx.strokeStyle = "rgba(127, 216, 232, 0.6)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(sx0 + 0.5, 0.5, sx1 - sx0 - 1, h - 1);
+      }
+    }
+
+    // in-progress drag selection
+    if (dragSel) {
+      const dx0 = Math.min(dragSel.x0, dragSel.x1);
+      const dx1 = Math.max(dragSel.x0, dragSel.x1);
+      ctx.fillStyle = "rgba(127, 216, 232, 0.2)";
+      ctx.fillRect(dx0, 0, dx1 - dx0, h);
+    }
+
+    // playhead
+    const pf = playhead / duration();
+    if (pf >= gramView.a && pf <= gramView.b) {
+      const x = fracToX(pf);
+      ctx.strokeStyle = "#7FD8E8";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, h);
+      ctx.stroke();
+      ctx.fillStyle = "#7FD8E8";
+      ctx.beginPath();
+      ctx.moveTo(x - 5, 0);
+      ctx.lineTo(x + 5, 0);
+      ctx.lineTo(x, 7);
+      ctx.closePath();
+      ctx.fill();
+    }
   }
 
   function drawReviewSpectrum() {
@@ -517,12 +565,36 @@
     onPeaks(peaks);
   }
 
-  // ---------- scrubbing ----------
+  // ---------- scrubbing / selecting ----------
   let scrubbing = false;
+  let selDrag = null;      // { x0, x1 } CSS px while dragging in select mode
+  let lastGramTap = 0;
+
+  function updateGramNote() {
+    if (mode !== "review") return;
+    if (selection) {
+      const d = duration();
+      gramNote.textContent =
+        (selection.a * d).toFixed(2) + "–" + (selection.b * d).toFixed(2) +
+        " s selected · double-tap resets";
+    } else {
+      gramNote.textContent =
+        interactMode === "select" ? "drag to select a range" : "tap or drag to scrub";
+    }
+  }
+
+  function resetGramView() {
+    gramView = { a: 0, b: 1 };
+    selection = null;
+    updateGramNote();
+    drawTimeline();
+    drawReviewSpectrum();
+  }
 
   function scrubTo(clientX) {
     const rect = gramCanvas.getBoundingClientRect();
-    const frac = clamp((clientX - rect.left) / rect.width, 0, 1);
+    const vf = clamp((clientX - rect.left) / rect.width, 0, 1);
+    const frac = gramView.a + vf * (gramView.b - gramView.a);
     playhead = frac * duration();
     if (playing) startSourceAt(playhead);
     drawTimeline();
@@ -532,15 +604,66 @@
 
   gramCanvas.addEventListener("pointerdown", (e) => {
     if (mode !== "review") return;
-    scrubbing = true;
+    const now = performance.now();
+    if (now - lastGramTap < 300) {
+      lastGramTap = 0;
+      selDrag = null;
+      scrubbing = false;
+      resetGramView();
+      return;
+    }
+    lastGramTap = now;
     gramCanvas.setPointerCapture(e.pointerId);
-    scrubTo(e.clientX);
+    const rect = gramCanvas.getBoundingClientRect();
+    if (interactMode === "select") {
+      const x = clamp(e.clientX - rect.left, 0, rect.width);
+      selDrag = { x0: x, x1: x };
+      drawTimeline(selDrag);
+    } else {
+      scrubbing = true;
+      scrubTo(e.clientX);
+    }
   });
   gramCanvas.addEventListener("pointermove", (e) => {
-    if (scrubbing && mode === "review") scrubTo(e.clientX);
+    if (mode !== "review") return;
+    if (scrubbing) {
+      scrubTo(e.clientX);
+    } else if (selDrag) {
+      const rect = gramCanvas.getBoundingClientRect();
+      selDrag.x1 = clamp(e.clientX - rect.left, 0, rect.width);
+      drawTimeline(selDrag);
+    }
   });
-  gramCanvas.addEventListener("pointerup", () => (scrubbing = false));
-  gramCanvas.addEventListener("pointercancel", () => (scrubbing = false));
+  function endGramPointer() {
+    scrubbing = false;
+    if (selDrag) {
+      const w = gramCanvas.clientWidth;
+      const lo = Math.min(selDrag.x0, selDrag.x1) / w;
+      const hi = Math.max(selDrag.x0, selDrag.x1) / w;
+      selDrag = null;
+      if (hi - lo > 0.01) {
+        const span = gramView.b - gramView.a;
+        const a = gramView.a + lo * span;
+        const b = gramView.a + hi * span;
+        selection = { a, b };
+        gramView = { a, b }; // zoom to the selected analysis range
+        playhead = clamp(playhead, a * duration(), b * duration());
+        updateGramNote();
+        drawReviewSpectrum();
+        updateTimeLabel();
+      }
+      drawTimeline();
+    }
+  }
+  gramCanvas.addEventListener("pointerup", endGramPointer);
+  gramCanvas.addEventListener("pointercancel", endGramPointer);
+
+  modeBtn.addEventListener("click", () => {
+    interactMode = interactMode === "scrub" ? "select" : "scrub";
+    modeBtn.textContent = interactMode.toUpperCase();
+    modeBtn.classList.toggle("sel", interactMode === "select");
+    updateGramNote();
+  });
 
   // ---------- playback ----------
   async function ensurePlayCtx() {
@@ -627,6 +750,8 @@
     gram = null;
     gramImage = null;
     playhead = 0;
+    gramView = { a: 0, b: 1 };
+    selection = null;
   }
 
   // ---------- WAV export ----------
@@ -967,6 +1092,8 @@
     stopSimPlayback();
     simAudio = null;
     simRaw = null;
+    plotViews.force = { a: 0, b: 1 };
+    plotViews.sound = { a: 0, b: 1 };
     simProgress.hidden = false;
     simProgressFill.style.width = "0%";
     runSimBtn.textContent = "RUNNING…";
@@ -1069,8 +1196,11 @@
   // FULL-resolution data (honest scaling); the drawn polyline is stride-
   // decimated to ~TRACE_PTS points for responsiveness.
   const TRACE_PTS = 4000;
+  const plotViews = { force: { a: 0, b: 1 }, sound: { a: 0, b: 1 } };
+  const plotInfo = {};
 
-  function drawTrace(canvas, data, color, axes) {
+  function drawTrace(canvas, key, data, color, axes) {
+    const view = plotViews[key];
     const p = prepPlotCanvas(canvas);
     if (!p) return null;
     const { ctx, w, h } = p;
@@ -1081,10 +1211,13 @@
     const ph = h - T - B;
     if (pw < 20 || ph < 20) return null;
 
-    // full-resolution range scan
+    // range scan over the visible window (full resolution)
+    const n = data.length;
+    const i0 = Math.floor(view.a * (n - 1));
+    const i1 = Math.max(i0 + 1, Math.ceil(view.b * (n - 1)));
     let lo = Infinity;
     let hi = -Infinity;
-    for (let i = 0; i < data.length; i++) {
+    for (let i = i0; i <= i1; i++) {
       const v = data[i];
       if (v < lo) lo = v;
       if (v > hi) hi = v;
@@ -1119,22 +1252,22 @@
       if (y0 > T + 14 && y0 < T + ph - 14) ctx.fillText(axes.yFmt(0), L - 5, y0);
     }
 
-    // x tick labels + axis caption
+    // x tick labels + axis caption (window times)
     ctx.textBaseline = "top";
     ctx.textAlign = "left";
-    ctx.fillText("0", L, T + ph + 4);
+    ctx.fillText((axes.xMax * view.a).toFixed(2), L, T + ph + 4);
     ctx.textAlign = "right";
-    ctx.fillText(axes.xMax.toFixed(2), L + pw, T + ph + 4);
+    ctx.fillText((axes.xMax * view.b).toFixed(2), L + pw, T + ph + 4);
     ctx.textAlign = "center";
     ctx.fillText(axes.xLabel, L + pw / 2, T + ph + 4);
 
-    // decimated polyline through real samples
-    const n = data.length;
-    const stride = Math.max(1, Math.floor(n / TRACE_PTS));
+    // decimated polyline through real samples in the window
+    const win = i1 - i0;
+    const stride = Math.max(1, Math.floor(win / TRACE_PTS));
     ctx.beginPath();
     let first = true;
-    for (let i = 0; i < n; i += stride) {
-      const x = L + (i / (n - 1)) * pw;
+    for (let i = i0; i <= i1; i += stride) {
+      const x = L + ((i - i0) / win) * pw;
       const y = yOf(data[i]);
       if (first) {
         ctx.moveTo(x, y);
@@ -1147,13 +1280,64 @@
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    return { hi, lo, L, T, pw, ph };
+    const info = { hi, lo, L, T, pw, ph };
+    plotInfo[key] = info;
+    return info;
+  }
+
+  // drag to zoom, double-tap to reset — shared by both sim plots
+  function attachPlotZoom(canvas, key, redraw) {
+    let drag = null;
+    let lastTap = 0;
+    canvas.addEventListener("pointerdown", (e) => {
+      const now = performance.now();
+      if (now - lastTap < 300) {
+        lastTap = 0;
+        drag = null;
+        plotViews[key] = { a: 0, b: 1 };
+        redraw();
+        return;
+      }
+      lastTap = now;
+      canvas.setPointerCapture(e.pointerId);
+      const rect = canvas.getBoundingClientRect();
+      const x = clamp(e.clientX - rect.left, 0, rect.width);
+      drag = { x0: x, x1: x, rect };
+    });
+    canvas.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      drag.x1 = clamp(e.clientX - drag.rect.left, 0, drag.rect.width);
+      redraw();
+      const info = plotInfo[key];
+      if (!info) return;
+      const ctx = canvas.getContext("2d");
+      const a = clamp(Math.min(drag.x0, drag.x1), info.L, info.L + info.pw);
+      const b = clamp(Math.max(drag.x0, drag.x1), info.L, info.L + info.pw);
+      ctx.fillStyle = "rgba(127, 216, 232, 0.18)";
+      ctx.fillRect(a, info.T, b - a, info.ph);
+    });
+    function end() {
+      if (!drag) return;
+      const info = plotInfo[key];
+      const d = drag;
+      drag = null;
+      if (info && Math.abs(d.x1 - d.x0) > 8) {
+        const v = plotViews[key];
+        const span = v.b - v.a;
+        const lo = clamp((Math.min(d.x0, d.x1) - info.L) / info.pw, 0, 1);
+        const hi = clamp((Math.max(d.x0, d.x1) - info.L) / info.pw, 0, 1);
+        if (hi > lo) plotViews[key] = { a: v.a + lo * span, b: v.a + hi * span };
+      }
+      redraw();
+    }
+    canvas.addEventListener("pointerup", end);
+    canvas.addEventListener("pointercancel", end);
   }
 
   function drawForcePlot() {
     if (!simRaw) return;
     const data = forceData();
-    const info = drawTrace(forcePlot, data, {
+    const info = drawTrace(forcePlot, "force", data, {
       line: "#7FD8E8",
     }, {
       yFmt: fmtForceAxis,
@@ -1169,7 +1353,7 @@
   function drawSoundPlot(playT) {
     if (!simAudio) return;
     const dur = simAudio.samples.length / simAudio.rate;
-    const info = drawTrace(soundPlot, simAudio.samples, {
+    const info = drawTrace(soundPlot, "sound", simAudio.samples, {
       line: "#FFB24D",
     }, {
       yFmt: (v) => v.toFixed(1),
@@ -1178,9 +1362,11 @@
     });
     if (!info) return;
     soundStats.textContent = dur.toFixed(2) + " s";
-    if (playT != null && dur > 0) {
+    const v = plotViews.sound;
+    const pf = clamp(playT != null ? playT / dur : -1, 0, 1);
+    if (playT != null && dur > 0 && pf >= v.a && pf <= v.b) {
       const ctx = soundPlot.getContext("2d");
-      const x = info.L + clamp(playT / dur, 0, 1) * info.pw;
+      const x = info.L + ((pf - v.a) / (v.b - v.a)) * info.pw;
       ctx.strokeStyle = "#7FD8E8";
       ctx.lineWidth = 1.5;
       ctx.beginPath();
@@ -1205,6 +1391,10 @@
   }
 
   forceChan.addEventListener("change", drawForcePlot);
+  attachPlotZoom(forcePlot, "force", drawForcePlot);
+  attachPlotZoom(soundPlot, "sound", () =>
+    drawSoundPlot(simPlaySource ? currentSimPlayT() : null)
+  );
 
   window.addEventListener("resize", () => {
     if (simRaw && !simResults.hidden) {
@@ -1327,6 +1517,15 @@
   // DRAWING (shared)
   // ============================================================
 
+  let lastSpecOffset = 0; // display-only dB shift for the PSD scale
+
+  function scaleOffset(hzPerBin) {
+    // PSD (dB/Hz) = amplitude dB − 10·log10(bin width × ENBW). Hann ENBW ≈ 1.5;
+    // the live analyser is unwindowed (ENBW 1.0) — the small difference is
+    // irrelevant for a display scale, so use the Hann figure throughout.
+    return settings.scale === "psd" ? -10 * Math.log10(hzPerBin * 1.5) : 0;
+  }
+
   function drawSpectrumTrace(mags, maxBin, hzPerBin, peaks, startBin) {
     const w = specCanvas.clientWidth;
     const h = specCanvas.clientHeight;
@@ -1336,10 +1535,13 @@
     ctx.clearRect(0, 0, w, h);
     drawGrid(ctx, w, h);
 
+    const off = scaleOffset(hzPerBin);
+    lastSpecOffset = off;
+
     ctx.beginPath();
     for (let i = startBin; i <= maxBin; i++) {
       const x = (i / maxBin) * w;
-      const y = dbToY(mags[i], h);
+      const y = dbToY(mags[i] + off, h);
       if (i === startBin) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
@@ -1358,7 +1560,7 @@
     const topHz = maxBin * hzPerBin;
     peaks.forEach((p, idx) => {
       const x = (p.freq / topHz) * w;
-      const y = dbToY(p.db, h);
+      const y = dbToY(p.db + off, h);
       ctx.fillStyle = idx === 0 ? "#7FD8E8" : "rgba(127, 216, 232, 0.55)";
       ctx.beginPath();
       ctx.moveTo(x, y - 4);
@@ -1460,7 +1662,8 @@
     transport.hidden = mode !== "review";
     loadLabel.hidden = mode !== "idle";
     gramTitle.textContent = mode === "review" ? "SESSION TIMELINE" : "SPECTROGRAM";
-    gramNote.textContent = mode === "review" ? "tap or drag to scrub" : "time →";
+    if (mode === "review") updateGramNote();
+    else gramNote.textContent = "time →";
 
     if (mode === "idle") {
       toggleBtn.textContent = "START LISTENING";
@@ -1498,7 +1701,8 @@
       return;
     }
     peakFreqEl.textContent = Math.round(peaks[0].freq).toString();
-    peakDbEl.textContent = peaks[0].db.toFixed(1);
+    peakDbEl.textContent = (peaks[0].db + lastSpecOffset).toFixed(1);
+    dbUnitEl.textContent = settings.scale === "psd" ? "dB/Hz" : "dB";
   }
 
   function updateChips(peaks) {
@@ -1510,7 +1714,7 @@
     peakChips.innerHTML = peaks
       .map(
         (p, i) =>
-          `<span class="chip${i === 0 ? " chip-top" : ""}"><b>${fmtHz(p.freq)}</b>${p.db.toFixed(0)} dB</span>`
+          `<span class="chip${i === 0 ? " chip-top" : ""}"><b>${fmtHz(p.freq)}</b>${(p.db + lastSpecOffset).toFixed(0)} ${settings.scale === "psd" ? "dB/Hz" : "dB"}</span>`
       )
       .join("");
   }
@@ -1631,7 +1835,46 @@
     });
   }
 
+  // ---------- settings tab ----------
+  const SETTING_FIELDS = [
+    { id: "setScale", key: "scale", parse: (v) => v },
+    { id: "setSmooth", key: "smooth", parse: (v) => clamp(Number(v) || 0, 0, 0.9) },
+    { id: "setMaxPeaks", key: "maxPeaks", parse: (v) => clamp(Math.round(Number(v) || 5), 1, 8) },
+    { id: "setThresh", key: "thresh", parse: (v) => clamp(Number(v) || 12, 3, 40) },
+    { id: "setMinSep", key: "minSep", parse: (v) => Math.max(0, Number(v) || 0) },
+    { id: "setScanMin", key: "scanMin", parse: (v) => Math.max(10, Number(v) || 10) },
+    { id: "setScanMax", key: "scanMax", parse: (v) => Math.max(100, Number(v) || 100) },
+  ];
+
+  function settingsToUi() {
+    SETTING_FIELDS.forEach((f) => ($(f.id).value = settings[f.key]));
+  }
+
+  function applySettings() {
+    saveJson(SETTINGS_KEY, settings);
+    if (analyser) analyser.smoothingTimeConstant = settings.smooth;
+    if (mode === "review") {
+      drawReviewSpectrum(); // re-run peaks + redraw with new scale/thresholds
+    }
+  }
+
+  SETTING_FIELDS.forEach((f) => {
+    $(f.id).addEventListener("change", () => {
+      settings[f.key] = f.parse($(f.id).value);
+      $(f.id).value = settings[f.key];
+      applySettings();
+    });
+  });
+
+  $("resetSettingsBtn").addEventListener("click", () => {
+    settings = Object.assign({}, DEFAULT_SETTINGS);
+    settingsToUi();
+    applySettings();
+  });
+
   // ---------- init ----------
+  settings = Object.assign({}, DEFAULT_SETTINGS, loadJson(SETTINGS_KEY, {}));
+  settingsToUi();
   restoreSimInputs();
   requestAnimationFrame(() => {
     fitCanvas(specCanvas, specCtx, false);
