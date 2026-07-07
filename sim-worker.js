@@ -13,7 +13,7 @@
 
    Output messages:
      { type: "progress", value: 0..1 }
-     { type: "done", fs, metric, xt: Float32Array, fx: Float32Array }
+     { type: "done", fs, metric, xt, yt, fx, fy: Float32Array }
      { type: "error", message }
 
    Notes vs. the Python original:
@@ -122,6 +122,7 @@ function run(p) {
 
   // --- outputs ---
   const xt = new Float32Array(steps);
+  const yt = new Float32Array(steps);
   const fx = new Float32Array(steps);
   const fy = new Float32Array(steps);
 
@@ -184,6 +185,7 @@ function run(p) {
       syt += my.p[m];
     }
     xt[cnt] = sxt;
+    yt[cnt] = syt;
 
     if (cnt % progEvery === 0) {
       self.postMessage({ type: "progress", value: cnt / steps });
@@ -207,10 +209,11 @@ function run(p) {
   }
 
   const xtss = xt.slice(si);
+  const ytss = yt.slice(si);
   const fxss = fx.slice(si);
   const fyss = fy.slice(si);
   self.postMessage(
-    { type: "done", fs, metric, xt: xtss, fx: fxss, fy: fyss },
-    [xtss.buffer, fxss.buffer, fyss.buffer]
+    { type: "done", fs, metric, xt: xtss, yt: ytss, fx: fxss, fy: fyss },
+    [xtss.buffer, ytss.buffer, fxss.buffer, fyss.buffer]
   );
 }

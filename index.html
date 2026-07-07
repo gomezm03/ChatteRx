@@ -249,23 +249,10 @@
       <div class="sim-plot">
         <div class="sim-plot-head">
           <span class="plot-title" id="timePlotTitle">RESULTANT FORCE (N) — steady state</span>
-          <select id="forceChan" class="head-select" aria-label="Signal channel">
-            <option value="res" selected>Resultant</option>
-            <option value="fx">Fx</option>
-            <option value="fy">Fy</option>
-            <option value="disp">Displacement</option>
-          </select>
+          <select id="forceChan" class="head-select" aria-label="Signal channel"></select>
           <span class="plot-stat" id="forceStats"></span>
         </div>
         <div class="plot-body"><canvas id="forcePlot" class="sim-canvas"></canvas></div>
-      </div>
-
-      <div class="sim-plot">
-        <div class="sim-plot-head">
-          <span class="plot-title" id="fftPlotTitle">FFT (dB) — resultant force</span>
-          <span class="plot-stat" id="fftStats"></span>
-        </div>
-        <div class="plot-body"><canvas id="fftPlot" class="sim-canvas"></canvas></div>
       </div>
 
       <div class="sim-plot">
@@ -274,6 +261,14 @@
           <span class="plot-stat" id="soundStats"></span>
         </div>
         <div class="plot-body"><canvas id="soundPlot" class="sim-canvas"></canvas></div>
+      </div>
+
+      <div class="sim-plot">
+        <div class="sim-plot-head">
+          <span class="plot-title" id="fftPlotTitle">FFT (N) — resultant force</span>
+          <span class="plot-stat" id="fftStats"></span>
+        </div>
+        <div class="plot-body"><canvas id="fftPlot" class="sim-canvas"></canvas></div>
       </div>
       <p class="form-note">Drag across a plot to zoom in; double-tap to reset. The FFT is computed from the visible window of the signal plot.</p>
 
@@ -294,7 +289,7 @@
 <div class="sim-scroll">
 
   <section class="panel form-panel">
-    <div class="panel-head"><span class="panel-title">SPECTRUM DISPLAY</span></div>
+    <div class="panel-head"><span class="panel-title">SPECTRUM DISPLAY — ANALYZE</span></div>
     <div class="form-body">
       <div class="form-grid">
         <label class="span-2"><span class="lab">Scale</span>
@@ -306,6 +301,35 @@
           <input id="setSmooth" type="number" step="0.05" min="0" max="0.9" inputmode="decimal"></label>
       </div>
       <p class="form-note">Smoothing averages successive live FFT frames for a steadier trace; it does not affect recordings or review.</p>
+    </div>
+  </section>
+
+  <section class="panel form-panel">
+    <div class="panel-head"><span class="panel-title">SIMULATION</span></div>
+    <div class="form-body">
+      <div class="form-grid">
+        <label class="span-2"><span class="lab">FFT scale</span>
+          <select id="setSimScale">
+            <option value="lin" selected>Linear amplitude</option>
+            <option value="db">FFT amplitude (dB)</option>
+            <option value="psd">Power spectral density (dB/Hz)</option>
+          </select></label>
+        <label class="span-2"><span class="lab">Sound source</span>
+          <select id="setSoundSrc">
+            <option value="xt" selected>Displacement x</option>
+            <option value="yt">Displacement y</option>
+            <option value="dres">Resultant displacement</option>
+            <option value="fx">Force Fx</option>
+            <option value="fy">Force Fy</option>
+            <option value="fres">Resultant force</option>
+          </select></label>
+        <label class="span-2"><span class="lab">Show x / y components in plots</span>
+          <select id="setShowComp">
+            <option value="off" selected>Off — resultants only</option>
+            <option value="on">On — add Fx, Fy, x, y</option>
+          </select></label>
+      </div>
+      <p class="form-note">Sound source changes re-render the audio of the last run instantly — no re-simulation needed.</p>
     </div>
   </section>
 

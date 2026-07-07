@@ -27,6 +27,9 @@
     minSep: 60,       // Hz between reported peaks
     scanMin: 100,     // Hz, periodic-sampling scan band (stability engine)
     scanMax: 10000,
+    simScale: "lin",  // sim FFT: "lin" | "db" | "psd"
+    soundSrc: "xt",   // sim sound: xt | yt | dres | fx | fy | fres
+    showComp: "off",  // add Fx/Fy/x/y to the sim channel dropdown
   };
   let settings = Object.assign({}, DEFAULT_SETTINGS);
 
@@ -1112,7 +1115,7 @@
       if (msg.type === "progress") {
         simProgressFill.style.width = (msg.value * 100).toFixed(1) + "%";
       } else if (msg.type === "done") {
-        finishSim(msg, modesX.length > 0);
+        finishSim(msg);
       } else if (msg.type === "error") {
         showSimError("Simulation failed: " + msg.message);
         resetSimUi();
@@ -1132,22 +1135,15 @@
     });
   });
 
-  function finishSim(msg, hasModes) {
+  function finishSim(msg) {
     resetSimUi();
 
-    // Sonify tool displacement when the tool is flexible (that's the
-    // vibration you hear); fall back to force for a rigid tool.
-    const src = hasModes ? msg.xt : msg.fx;
-    const samples = resampleToRate(src, msg.fs, AUDIO_RATE);
-    normalizePeak(samples, 0.7);
-
-    simAudio = {
-      samples,
-      rate: AUDIO_RATE,
-      metric: msg.metric,
-      fs: msg.fs,
+    simRaw = {
+      fx: msg.fx, fy: msg.fy, xt: msg.xt, yt: msg.yt,
+      fs: msg.fs, fres: null, dres: null,
     };
-    simRaw = { fx: msg.fx, fy: msg.fy, xt: msg.xt, fs: msg.fs, res: null };
+    simAudio = { samples: null, rate: AUDIO_RATE, metric: msg.metric, fs: msg.fs };
+    rebuildSimAudio();
 
     $("rMetric").textContent = Number.isFinite(msg.metric)
       ? msg.metric.toPrecision(3) + " µm"
@@ -1169,20 +1165,69 @@
 
   // ---------- result plots ----------
 
-  function channelInfo() {
-    const ch = forceChan.value;
-    if (ch === "fx") return { data: simRaw.fx, kind: "force", label: "Force Fx", unit: "N" };
-    if (ch === "fy") return { data: simRaw.fy, kind: "force", label: "Force Fy", unit: "N" };
-    if (ch === "disp") return { data: simRaw.xt, kind: "disp", label: "Displacement x", unit: "µm" };
-    if (!simRaw.res) {
-      const n = simRaw.fx.length;
+  function resultantOf(ax, ay, cacheKey) {
+    if (!simRaw[cacheKey]) {
+      const n = ax.length;
       const r = new Float32Array(n);
-      for (let i = 0; i < n; i++) {
-        r[i] = Math.hypot(simRaw.fx[i], simRaw.fy[i]);
-      }
-      simRaw.res = r;
+      for (let i = 0; i < n; i++) r[i] = Math.hypot(ax[i], ay[i]);
+      simRaw[cacheKey] = r;
     }
-    return { data: simRaw.res, kind: "force", label: "Resultant force", unit: "N" };
+    return simRaw[cacheKey];
+  }
+
+  function signalByKey(key) {
+    switch (key) {
+      case "fx": return { data: simRaw.fx, kind: "force", label: "Force Fx", unit: "N" };
+      case "fy": return { data: simRaw.fy, kind: "force", label: "Force Fy", unit: "N" };
+      case "dx": case "xt":
+        return { data: simRaw.xt, kind: "disp", label: "Displacement x", unit: "µm" };
+      case "dy": case "yt":
+        return { data: simRaw.yt, kind: "disp", label: "Displacement y", unit: "µm" };
+      case "dres":
+        return { data: resultantOf(simRaw.xt, simRaw.yt, "dres"), kind: "disp", label: "Resultant displacement", unit: "µm" };
+      default:
+        return { data: resultantOf(simRaw.fx, simRaw.fy, "fres"), kind: "force", label: "Resultant force", unit: "N" };
+    }
+  }
+
+  function channelInfo() {
+    return signalByKey(forceChan.value);
+  }
+
+  const CHAN_BASE = [
+    { v: "fres", t: "Resultant force" },
+    { v: "dres", t: "Resultant displacement" },
+  ];
+  const CHAN_COMP = [
+    { v: "fx", t: "Force Fx" },
+    { v: "fy", t: "Force Fy" },
+    { v: "dx", t: "Displacement x" },
+    { v: "dy", t: "Displacement y" },
+  ];
+
+  function buildChanOptions() {
+    const prev = forceChan.value;
+    const opts = settings.showComp === "on" ? CHAN_BASE.concat(CHAN_COMP) : CHAN_BASE;
+    forceChan.innerHTML = opts
+      .map((o) => `<option value="${o.v}">${o.t}</option>`)
+      .join("");
+    forceChan.value = opts.some((o) => o.v === prev) ? prev : "fres";
+  }
+
+  // Render the sound from the selected source; silent sources (e.g. a rigid
+  // tool's displacement) fall back to resultant force.
+  function rebuildSimAudio() {
+    if (!simRaw || !simAudio) return;
+    let src = signalByKey(settings.soundSrc).data;
+    let peak = 0;
+    for (let i = 0; i < src.length; i++) {
+      const v = Math.abs(src[i]);
+      if (v > peak) peak = v;
+    }
+    if (peak < 1e-12) src = signalByKey("fres").data;
+    const samples = resampleToRate(src, simRaw.fs, AUDIO_RATE);
+    normalizePeak(samples, 0.7);
+    simAudio.samples = samples;
   }
 
   function prepPlotCanvas(canvas) {
@@ -1438,20 +1483,22 @@
     const binHz = simRaw.fs / NF;
     // default frequency span: 10× tooth passing frequency (Tony's plots)
     const ftooth = simRunMeta ? (simRunMeta.Nt * simRunMeta.omega) / 60 : 0;
-    const fmax = Math.min(
-      simRaw.fs / 2,
-      ftooth > 0 ? 10 * ftooth : 5000
-    );
+    const fmax = Math.min(simRaw.fs / 2, ftooth > 0 ? 10 * ftooth : 5000);
     const bins = Math.max(8, Math.min(NF / 2, Math.ceil(fmax / binHz)));
-    const off = scaleOffset(binHz);
-    const db = new Float32Array(bins);
-    for (let b = 0; b < bins; b++) {
-      db[b] = 10 * Math.log10(pow[b] / segs + 1e-24) + off;
-    }
-    // drop the DC bin (mean force) so it doesn't crush the scale
-    if (bins > 1) db[0] = db[1];
 
-    fftData = { db, binHz };
+    const sc = settings.simScale;
+    const psdOff = sc === "psd" ? -10 * Math.log10(binHz * 1.5) : 0;
+    const vals = new Float32Array(bins);
+    for (let b = 0; b < bins; b++) {
+      const meanPow = pow[b] / segs;
+      vals[b] = sc === "lin"
+        ? Math.sqrt(meanPow)
+        : 10 * Math.log10(meanPow + 1e-24) + psdOff;
+    }
+    // drop the DC bin (the mean of the signal) so it doesn't crush the scale
+    if (bins > 1) vals[0] = sc === "lin" ? 0 : vals[1];
+
+    fftData = { vals, binHz };
   }
 
   function drawFFTPlot() {
@@ -1460,30 +1507,35 @@
       if (!fftData) return;
     }
     const ch = channelInfo();
-    const unit = settings.scale === "psd" ? "dB/Hz" : "dB";
+    const sc = settings.simScale;
+    const isDisp = ch.kind === "disp";
+    const unit = sc === "lin" ? ch.unit : sc === "psd" ? "dB/Hz" : "dB";
     fftPlotTitle.textContent = "FFT (" + unit + ") — " + ch.label.toLowerCase();
-    const info = drawTrace(fftPlot, "fft", fftData.db, {
+    const yFmt =
+      sc !== "lin" ? (val) => val.toFixed(0)
+      : isDisp ? fmtDispAxis
+      : fmtForceAxis;
+    const info = drawTrace(fftPlot, "fft", fftData.vals, {
       line: "#FFB24D",
     }, {
-      yFmt: (val) => val.toFixed(0),
-      xMax: fftData.db.length * fftData.binHz,
+      yFmt,
+      xMax: fftData.vals.length * fftData.binHz,
       xLabel: "frequency (Hz)",
       xFmt: (f) => (f >= 1000 ? (f / 1000).toFixed(2) + "k" : Math.round(f).toString()),
     });
     if (info) {
-      // dominant bin in the visible window
       const v = plotViews.fft;
-      const nB = fftData.db.length;
-      const b0 = Math.floor(v.a * (nB - 1));
+      const nB = fftData.vals.length;
+      const b0 = Math.max(1, Math.floor(v.a * (nB - 1)));
       const b1 = Math.max(b0 + 1, Math.ceil(v.b * (nB - 1)));
       let bi = b0;
-      for (let b = b0; b <= b1; b++) if (fftData.db[b] > fftData.db[bi]) bi = b;
+      for (let b = b0; b <= b1; b++) if (fftData.vals[b] > fftData.vals[bi]) bi = b;
       fftStats.textContent = "peak " + fmtHz(bi * fftData.binHz);
     }
   }
 
   function drawSoundPlot(playT) {
-    if (!simAudio) return;
+    if (!simAudio || !simAudio.samples) return;
     const dur = simAudio.samples.length / simAudio.rate;
     const info = drawTrace(soundPlot, "sound", simAudio.samples, {
       line: "#FFB24D",
@@ -1626,7 +1678,7 @@
   }
 
   playSimBtn.addEventListener("click", async () => {
-    if (!simAudio) return;
+    if (!simAudio || !simAudio.samples) return;
     if (simPlaySource) {
       stopSimPlayback();
       return;
@@ -1658,7 +1710,7 @@
 
   // ---------- send to analyzer ----------
   sendBtn.addEventListener("click", async () => {
-    if (!simAudio) return;
+    if (!simAudio || !simAudio.samples) return;
     stopSimPlayback();
     if (mode === "live") stopLive(true); // discard any live capture
     switchTab("analyze");
@@ -1997,6 +2049,9 @@
     { id: "setMinSep", key: "minSep", parse: (v) => Math.max(0, Number(v) || 0) },
     { id: "setScanMin", key: "scanMin", parse: (v) => Math.max(10, Number(v) || 10) },
     { id: "setScanMax", key: "scanMax", parse: (v) => Math.max(100, Number(v) || 100) },
+    { id: "setSimScale", key: "simScale", parse: (v) => v },
+    { id: "setSoundSrc", key: "soundSrc", parse: (v) => v },
+    { id: "setShowComp", key: "showComp", parse: (v) => v },
   ];
 
   function settingsToUi() {
@@ -2009,9 +2064,14 @@
     if (mode === "review") {
       drawReviewSpectrum(); // re-run peaks + redraw with new scale/thresholds
     }
+    buildChanOptions();
     if (simRaw && !simResults.hidden) {
+      stopSimPlayback();
+      rebuildSimAudio();
       refreshFFT();
+      drawSignalPlot();
       drawFFTPlot();
+      drawSoundPlot(null);
     }
   }
 
@@ -2032,6 +2092,7 @@
   // ---------- init ----------
   settings = Object.assign({}, DEFAULT_SETTINGS, loadJson(SETTINGS_KEY, {}));
   settingsToUi();
+  buildChanOptions();
   restoreSimInputs();
   requestAnimationFrame(() => {
     fitCanvas(specCanvas, specCtx, false);
