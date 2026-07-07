@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#14171C">
 <title>ChatteRx — Cut Audio Analyzer</title>
-<meta name="description" content="Live audio spectrum, peak analysis, and session replay for milling cut sounds.">
+<meta name="description" content="Live audio spectrum, peak analysis, session replay, and milling time-domain simulation.">
 <link rel="manifest" href="./manifest.json">
 <link rel="icon" href="./icon-192.png">
 <link rel="apple-touch-icon" href="./icon-192.png">
@@ -26,9 +26,16 @@
   </div>
 </header>
 
-<main class="app" id="app" data-mode="idle">
+<nav class="tabs">
+  <button class="tab active" id="tabBtnAnalyze" data-tab="analyze">ANALYZE</button>
+  <button class="tab" id="tabBtnSim" data-tab="sim">SIMULATE</button>
+</nav>
 
-  <!-- Dominant peak readout -->
+<main class="app">
+
+<!-- ======================= ANALYZE TAB ======================= -->
+<section class="tab-panel tab-analyze" id="tab-analyze">
+
   <section class="readout" aria-live="polite">
     <div class="readout-main">
       <span class="readout-value" id="peakFreq">----</span>
@@ -40,7 +47,6 @@
     </div>
   </section>
 
-  <!-- Live spectrum / playhead spectrum -->
   <section class="panel panel-spectrum">
     <div class="panel-head">
       <span class="panel-title">SPECTRUM</span>
@@ -58,7 +64,6 @@
     </div>
   </section>
 
-  <!-- Live spectrogram / session timeline -->
   <section class="panel panel-gram">
     <div class="panel-head">
       <span class="panel-title" id="gramTitle">SPECTROGRAM</span>
@@ -68,7 +73,6 @@
       <canvas id="spectrogram" class="scope-canvas"></canvas>
       <div class="processing" id="processing" hidden>building timeline…</div>
     </div>
-    <!-- Review transport, lives with the timeline -->
     <div class="transport" id="transport" hidden>
       <button id="playBtn" class="t-btn t-play" aria-label="Play">▶</button>
       <span class="t-time" id="timeLabel">0:00 / 0:00</span>
@@ -76,7 +80,6 @@
     </div>
   </section>
 
-  <!-- Peaks as a compact chip strip -->
   <section class="chips-row">
     <span class="chips-label">PEAKS</span>
     <div class="chips" id="peakChips">
@@ -86,14 +89,181 @@
 
   <p class="error" id="errorMsg" hidden></p>
 
-  <!-- Primary control -->
   <div class="controls">
     <button id="toggleBtn" class="btn-main btn-start">START LISTENING</button>
+    <label class="btn-load" id="loadLabel" role="button" tabindex="0">
+      LOAD FILE
+      <input type="file" id="loadInput"
+             accept=".wav,.mp3,.m4a,.mp4,.aac,.ogg,audio/*,video/mp4" hidden>
+    </label>
   </div>
+
+</section>
+
+<!-- ======================= SIMULATE TAB ======================= -->
+<section class="tab-panel tab-sim" id="tab-sim" hidden>
+<div class="sim-scroll">
+
+  <!-- Cutting force coefficient database -->
+  <section class="panel form-panel">
+    <div class="panel-head">
+      <span class="panel-title">CUTTING FORCE COEFFICIENTS</span>
+      <select id="cfcPreset" class="head-select" aria-label="Coefficient preset"></select>
+    </div>
+    <div class="form-body">
+      <div class="form-grid">
+        <label>K<sub>tc</sub> <span class="unit">N/mm²</span>
+          <input id="cKtc" type="number" step="any" inputmode="decimal"></label>
+        <label>K<sub>rc</sub> <span class="unit">N/mm²</span>
+          <input id="cKrc" type="number" step="any" inputmode="decimal"></label>
+        <label>K<sub>ac</sub> <span class="unit">N/mm²</span>
+          <input id="cKac" type="number" step="any" inputmode="decimal"></label>
+        <label>K<sub>te</sub> <span class="unit">N/mm</span>
+          <input id="cKte" type="number" step="any" inputmode="decimal"></label>
+        <label>K<sub>re</sub> <span class="unit">N/mm</span>
+          <input id="cKre" type="number" step="any" inputmode="decimal"></label>
+        <label>K<sub>ae</sub> <span class="unit">N/mm</span>
+          <input id="cKae" type="number" step="any" inputmode="decimal"></label>
+      </div>
+      <div class="form-actions">
+        <button id="savePresetBtn" class="mini-btn">SAVE AS PRESET</button>
+        <button id="delPresetBtn" class="mini-btn mini-danger" hidden>DELETE PRESET</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Operating point -->
+  <section class="panel form-panel">
+    <div class="panel-head"><span class="panel-title">OPERATING POINT</span></div>
+    <div class="form-body">
+      <div class="form-grid">
+        <label>Spindle speed <span class="unit">rpm</span>
+          <input id="sOmega" type="number" step="any" inputmode="decimal" value="4580"></label>
+        <label>Axial depth b <span class="unit">mm</span>
+          <input id="sB" type="number" step="any" inputmode="decimal" value="2"></label>
+      </div>
+    </div>
+  </section>
+
+  <!-- Tool & cut -->
+  <section class="panel form-panel">
+    <div class="panel-head"><span class="panel-title">TOOL &amp; CUT</span></div>
+    <div class="form-body">
+      <div class="form-grid">
+        <label>Teeth N<sub>t</sub>
+          <input id="sNt" type="number" step="1" min="1" inputmode="numeric" value="1"></label>
+        <label>Diameter d <span class="unit">mm</span>
+          <input id="sD" type="number" step="any" inputmode="decimal" value="15.748"></label>
+        <label>Helix angle β <span class="unit">deg</span>
+          <input id="sBeta" type="number" step="any" inputmode="decimal" value="30"></label>
+        <label>Feed/tooth <span class="unit">mm</span>
+          <input id="sFt" type="number" step="any" inputmode="decimal" value="0.12"></label>
+        <label>Radial depth <span class="unit">mm</span>
+          <input id="sRd" type="number" step="any" inputmode="decimal" value="15.748"></label>
+        <label>Direction
+          <select id="sUd">
+            <option value="2" selected>Down milling</option>
+            <option value="1">Up milling</option>
+          </select></label>
+      </div>
+      <p class="form-note">Radial depth equal to diameter is a slotting cut.</p>
+    </div>
+  </section>
+
+  <!-- Tool-point dynamics -->
+  <section class="panel form-panel">
+    <div class="panel-head">
+      <span class="panel-title">TOOL-POINT DYNAMICS</span>
+      <span class="panel-note">applied to X and Y</span>
+    </div>
+    <div class="form-body">
+      <div class="modes-head">
+        <span>f<sub>n</sub> (Hz)</span><span>k (N/µm)</span><span>ζ (–)</span><span></span>
+      </div>
+      <div id="modeRows"></div>
+      <div class="form-actions">
+        <button id="addModeBtn" class="mini-btn">+ ADD MODE</button>
+      </div>
+      <p class="form-note">Remove all modes for a rigid tool — no chatter is possible and the sound comes from the force signal.</p>
+    </div>
+  </section>
+
+  <!-- Simulation settings -->
+  <section class="panel form-panel">
+    <div class="panel-head"><span class="panel-title">SIMULATION</span></div>
+    <div class="form-body">
+      <div class="form-grid">
+        <label>Revolutions
+          <input id="sRevs" type="number" step="1" min="10" inputmode="numeric" value="200"></label>
+        <label>Steps/rev
+          <input id="sStepsRev" type="number" step="1" min="360" inputmode="numeric" value="7200"></label>
+        <label>Axial slices
+          <input id="sAxial" type="number" step="1" min="1" inputmode="numeric" value="50"></label>
+      </div>
+      <p class="form-note">Second half of the record is treated as steady state for the metric and the audio.</p>
+    </div>
+  </section>
+
+  <p class="error" id="simError" hidden></p>
+
+  <button id="runSimBtn" class="btn-main btn-start">RUN SIMULATION</button>
+
+  <div class="progress" id="simProgress" hidden>
+    <div class="progress-fill" id="simProgressFill"></div>
+  </div>
+
+  <!-- Results -->
+  <section class="panel form-panel" id="simResults" hidden>
+    <div class="panel-head"><span class="panel-title">RESULTS</span></div>
+    <div class="form-body">
+      <div class="result-grid">
+        <div class="result-cell">
+          <span class="result-label">STABILITY METRIC (per-rev)</span>
+          <span class="result-value" id="rMetric">–</span>
+        </div>
+        <div class="result-cell">
+          <span class="result-label">AUDIO LENGTH</span>
+          <span class="result-value" id="rDur">–</span>
+        </div>
+        <div class="result-cell">
+          <span class="result-label">SIM RATE</span>
+          <span class="result-value" id="rFs">–</span>
+        </div>
+      </div>
+      <div class="sim-plot">
+        <div class="sim-plot-head">
+          <span class="plot-title">FORCE — steady state</span>
+          <select id="forceChan" class="head-select" aria-label="Force channel">
+            <option value="fx" selected>Fx</option>
+            <option value="fy">Fy</option>
+            <option value="res">Resultant</option>
+          </select>
+          <span class="plot-stat" id="forceStats"></span>
+        </div>
+        <canvas id="forcePlot" class="sim-canvas"></canvas>
+      </div>
+
+      <div class="sim-plot">
+        <div class="sim-plot-head">
+          <span class="plot-title">SOUND — 48 kHz render</span>
+          <span class="plot-stat" id="soundStats"></span>
+        </div>
+        <canvas id="soundPlot" class="sim-canvas"></canvas>
+      </div>
+
+      <div class="form-actions">
+        <button id="playSimBtn" class="mini-btn mini-play">▶ PLAY</button>
+        <button id="sendBtn" class="mini-btn mini-send">ANALYZE IN ANALYZER →</button>
+      </div>
+      <p class="form-note">Play previews the sound right here. Analyzing in the Analyzer is optional — it opens the signal in the session timeline for scrubbing, spectrum inspection, and .wav export.</p>
+    </div>
+  </section>
+
+</div>
+</section>
 
 </main>
 
-<!-- iOS add-to-home-screen hint -->
 <div class="ios-hint" id="iosHint" hidden>
   <p>Install this app: tap <strong>Share</strong> then <strong>Add&nbsp;to&nbsp;Home&nbsp;Screen</strong>.</p>
   <button id="iosHintClose" aria-label="Dismiss">✕</button>

@@ -1,18 +1,18 @@
 /* ============================================================
-   ChatteRx — live audio spectrum, peak analysis, session replay
-   Modes:
-     idle   — nothing running
-     live   — mic → AnalyserNode (display) + raw capture (recording)
-     review — scrubbable session spectrogram, playback, WAV export
-   Extension point: onPeaks() receives detected peaks in both
-   live and review modes — the stability algorithm plugs in there.
+   ChatteRx — live audio spectrum, peak analysis, session replay,
+   and time-domain milling simulation.
+   Tabs:
+     ANALYZE — idle | live | review (mic, loaded file, or sim output)
+     SIMULATE — Tony's fixed_slices simulation with a CFC database
+   Extension point: onPeaks() receives detected peaks in both live
+   and review modes — the stability algorithm plugs in there.
    ============================================================ */
 
 (() => {
   "use strict";
 
   // ---------- config ----------
-  const FFT_SIZE_LIVE = 4096;     // live analyser; ~11.7 Hz/bin @48 kHz
+  const FFT_SIZE_LIVE = 4096;
   const SMOOTHING = 0.55;
   const MIN_DB = -100;
   const MAX_DB = -10;
@@ -21,10 +21,12 @@
   const PEAK_ABOVE_FLOOR_DB = 12;
   const UI_UPDATE_MS = 250;
 
-  const MAX_REC_SECONDS = 300;    // 5 min cap ≈ 55 MB of Float32 @48 kHz
-  const FFT_SIZE_REC = 2048;      // offline spectrogram resolution
-  const HOP_REC = 1024;           // 50% overlap
-  const STORE_MAX_HZ = 10000;     // spectrogram bins kept up to 10 kHz
+  const MAX_REC_SECONDS = 300;
+  const FFT_SIZE_REC = 2048;
+  const HOP_REC = 1024;
+  const STORE_MAX_HZ = 10000;
+
+  const AUDIO_RATE = 48000;       // rate for simulation-rendered audio
 
   // ---------- state ----------
   let mode = "idle";              // idle | live | review
@@ -45,21 +47,22 @@
   let recRate = 48000;
 
   // review
-  let recBuffer = null;           // Float32Array, full session
-  let gram = null;                // { cols, bins, data(Uint8), hzPerBin, hopSec }
-  let gramImage = null;           // offscreen canvas of full spectrogram
+  let recBuffer = null;
+  let gram = null;
+  let gramImage = null;
   let playCtx = null;
-  let playBuffer = null;          // AudioBuffer built once per session
+  let playBuffer = null;
   let playSource = null;
   let playing = false;
-  let playhead = 0;               // seconds
+  let playhead = 0;
   let playStartCtxTime = 0;
   let playStartOffset = 0;
 
   // ---------- elements ----------
   const $ = (id) => document.getElementById(id);
-  const appEl = $("app");
   const toggleBtn = $("toggleBtn");
+  const loadLabel = $("loadLabel");
+  const loadInput = $("loadInput");
   const statusEl = $("status");
   const statusText = $("statusText");
   const peakFreqEl = $("peakFreq");
@@ -79,12 +82,15 @@
   const specCtx = specCanvas.getContext("2d");
   const gramCtx = gramCanvas.getContext("2d");
 
-  // ---------- canvas sizing via ResizeObserver ----------
+  // ---------- canvas sizing ----------
   const DPR = () => Math.min(window.devicePixelRatio || 1, 2);
 
   function fitCanvas(canvas, ctx, preserve) {
-    const w = Math.round(canvas.clientWidth * DPR());
-    const h = Math.round(canvas.clientHeight * DPR());
+    const cssW = canvas.clientWidth;
+    const cssH = canvas.clientHeight;
+    if (cssW === 0 || cssH === 0) return; // hidden tab
+    const w = Math.round(cssW * DPR());
+    const h = Math.round(cssH * DPR());
     if (w === canvas.width && h === canvas.height) return;
     let snap = null;
     if (preserve && canvas.width > 0 && canvas.height > 0) {
@@ -120,6 +126,31 @@
       drawGrid(specCtx, specCanvas.clientWidth, specCanvas.clientHeight);
     }
   }
+
+  // ============================================================
+  // TABS
+  // ============================================================
+
+  const tabAnalyze = $("tab-analyze");
+  const tabSim = $("tab-sim");
+  const tabBtns = document.querySelectorAll(".tab");
+
+  function switchTab(name) {
+    tabBtns.forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+    tabAnalyze.hidden = name !== "analyze";
+    tabSim.hidden = name !== "sim";
+    if (name === "analyze") {
+      requestAnimationFrame(() => {
+        fitCanvas(specCanvas, specCtx, false);
+        fitCanvas(gramCanvas, gramCtx, false);
+        redrawStatic();
+      });
+    }
+  }
+
+  tabBtns.forEach((b) =>
+    b.addEventListener("click", () => switchTab(b.dataset.tab))
+  );
 
   // ============================================================
   // LIVE MODE
@@ -167,14 +198,11 @@
     loop();
   }
 
-  // Raw sample capture: AudioWorklet preferred, ScriptProcessor fallback.
   async function attachCapture(source) {
     const onChunk = (chunk) => {
       recChunks.push(chunk);
       recSamples += chunk.length;
-      if (recSamples >= MAX_REC_SECONDS * recRate) {
-        stopLive(); // auto-stop at the cap; session goes to review
-      }
+      if (recSamples >= MAX_REC_SECONDS * recRate) stopLive();
     };
 
     if (audioCtx.audioWorklet) {
@@ -214,13 +242,12 @@
         mute.connect(audioCtx.destination);
         return;
       } catch (e) {
-        /* fall through to ScriptProcessor */
+        /* fall through */
       } finally {
         URL.revokeObjectURL(url);
       }
     }
 
-    // Fallback for older browsers
     captureNode = audioCtx.createScriptProcessor(4096, 1, 1);
     captureNode.onaudioprocess = (e) =>
       onChunk(new Float32Array(e.inputBuffer.getChannelData(0)));
@@ -231,7 +258,7 @@
     mute.connect(audioCtx.destination);
   }
 
-  function stopLive() {
+  function stopLive(discard) {
     if (rafId) cancelAnimationFrame(rafId);
     if (captureNode) {
       try { captureNode.disconnect(); } catch (e) {}
@@ -248,10 +275,11 @@
     }
     analyser = null;
 
-    // Enough audio to review? (> 0.5 s)
-    if (recSamples > recRate * 0.5) {
+    if (!discard && recSamples > recRate * 0.5) {
       enterReview();
     } else {
+      recChunks = [];
+      recSamples = 0;
       setMode("idle");
     }
   }
@@ -276,16 +304,15 @@
       updateReadout(peaks);
       updateChips(peaks);
       onPeaks(peaks);
-      const secs = (now - liveStartTime) / 1000;
-      statusText.textContent = "listening · " + fmtTime(secs);
+      statusText.textContent =
+        "listening · " + fmtTime((now - liveStartTime) / 1000);
     }
 
     rafId = requestAnimationFrame(loop);
   }
 
   // ============================================================
-  // PEAK DETECTION (shared by live + review)
-  // startBin lets review skip the DC bin.
+  // PEAK DETECTION (shared)
   // ============================================================
 
   function findPeaks(mags, hzPerBin, maxBin, startBin) {
@@ -326,31 +353,37 @@
   }
 
   // ---------- extension point ----------
-  // Called ~4×/s (live) and on every scrub/playback frame (review) with
-  // peaks = [{ freq, db, bin }] sorted by level. Feed these plus spindle
-  // RPM / flute count into the stability + adjustment algorithm here.
   function onPeaks(peaks) {
     void peaks;
   }
 
   // ============================================================
-  // REVIEW MODE — timeline, scrubbing, playback, export
+  // REVIEW MODE
   // ============================================================
 
   async function enterReview() {
-    setMode("review");
-    processingEl.hidden = false;
-
-    // Assemble the session into one Float32Array
-    recBuffer = new Float32Array(recSamples);
+    const buf = new Float32Array(recSamples);
     let off = 0;
     for (const c of recChunks) {
-      recBuffer.set(c, off);
+      buf.set(c, off);
       off += c.length;
     }
     recChunks = [];
+    await openInReview(buf, recRate);
+  }
 
-    await computeGram();      // offline spectrogram (chunked, keeps UI alive)
+  // Open ANY signal in review mode: mic recording, decoded file,
+  // or simulation output.
+  async function openInReview(samples, rate) {
+    if (mode === "review") teardownReview();
+    recBuffer = samples;
+    recRate = rate;
+    recSamples = samples.length;
+
+    setMode("review");
+    processingEl.hidden = false;
+
+    await computeGram();
     renderGramImage();
     processingEl.hidden = true;
 
@@ -360,7 +393,6 @@
     updateTimeLabel();
   }
 
-  // Offline STFT with a Hann window, magnitudes quantized to Uint8.
   async function computeGram() {
     const fft = new FFT(FFT_SIZE_REC);
     const hzPerBin = recRate / FFT_SIZE_REC;
@@ -374,12 +406,11 @@
     );
     const data = new Uint8Array(cols * bins);
 
-    const window = new Float32Array(FFT_SIZE_REC);
+    const win = new Float32Array(FFT_SIZE_REC);
     for (let i = 0; i < FFT_SIZE_REC; i++) {
-      window[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (FFT_SIZE_REC - 1)));
+      win[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (FFT_SIZE_REC - 1)));
     }
-    // Amplitude → dBFS correction for the windowed, one-sided spectrum
-    const norm = 2 / (FFT_SIZE_REC * 0.5); // 0.5 = Hann coherent gain
+    const norm = 2 / (FFT_SIZE_REC * 0.5);
 
     const re = new Float32Array(FFT_SIZE_REC);
     const im = new Float32Array(FFT_SIZE_REC);
@@ -387,7 +418,7 @@
     for (let c = 0; c < cols; c++) {
       const start = c * HOP_REC;
       for (let i = 0; i < FFT_SIZE_REC; i++) {
-        re[i] = recBuffer[start + i] * window[i];
+        re[i] = (recBuffer[start + i] || 0) * win[i];
         im[i] = 0;
       }
       fft.transform(re, im);
@@ -396,7 +427,7 @@
         const db = 20 * Math.log10(mag + 1e-12);
         data[c * bins + b] = dbToU8(db);
       }
-      if ((c & 63) === 0) await nextFrame(); // yield to keep UI responsive
+      if ((c & 63) === 0) await nextFrame();
     }
 
     gram = { cols, bins, data, hzPerBin, hopSec: HOP_REC / recRate };
@@ -411,8 +442,6 @@
     return (u / 255) * (MAX_DB - MIN_DB) + MIN_DB;
   }
 
-  // Render the whole session once into an offscreen canvas
-  // (x = time column, y = frequency, row 0 = highest stored freq).
   function renderGramImage() {
     const { cols, bins, data } = gram;
     gramImage = document.createElement("canvas");
@@ -423,7 +452,7 @@
     const px = img.data;
     for (let c = 0; c < cols; c++) {
       for (let b = 0; b < bins; b++) {
-        const y = bins - 1 - b; // low freq at bottom
+        const y = bins - 1 - b;
         const [r, g, bl] = heat(data[c * bins + b] / 255);
         const o = (y * cols + c) * 4;
         px[o] = r; px[o + 1] = g; px[o + 2] = bl; px[o + 3] = 255;
@@ -436,11 +465,11 @@
     return recBuffer ? recBuffer.length / recRate : 0;
   }
 
-  // Draw timeline: spectrogram image (cropped to selected range) + playhead
   function drawTimeline() {
     if (!gramImage || !gram) return;
     const w = gramCanvas.clientWidth;
     const h = gramCanvas.clientHeight;
+    if (w === 0 || h === 0) return;
     const ctx = gramCtx;
     ctx.clearRect(0, 0, w, h);
 
@@ -448,15 +477,10 @@
       Math.floor(displayMaxHz / gram.hzPerBin),
       gram.bins
     );
-    const srcTop = gram.bins - shownBins; // crop rows above the range
+    const srcTop = gram.bins - shownBins;
     ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(
-      gramImage,
-      0, srcTop, gram.cols, shownBins,
-      0, 0, w, h
-    );
+    ctx.drawImage(gramImage, 0, srcTop, gram.cols, shownBins, 0, 0, w, h);
 
-    // playhead
     const x = (playhead / duration()) * w;
     ctx.strokeStyle = "#7FD8E8";
     ctx.lineWidth = 1.5;
@@ -473,13 +497,9 @@
     ctx.fill();
   }
 
-  // Spectrum panel shows the FFT column under the playhead
   function drawReviewSpectrum() {
     if (!gram) return;
-    const col = Math.min(
-      Math.floor(playhead / gram.hopSec),
-      gram.cols - 1
-    );
+    const col = Math.min(Math.floor(playhead / gram.hopSec), gram.cols - 1);
     const maxBin = Math.min(
       Math.floor(displayMaxHz / gram.hzPerBin),
       gram.bins - 1
@@ -502,7 +522,7 @@
     const rect = gramCanvas.getBoundingClientRect();
     const frac = clamp((clientX - rect.left) / rect.width, 0, 1);
     playhead = frac * duration();
-    if (playing) restartPlaybackAt(playhead);
+    if (playing) startSourceAt(playhead);
     drawTimeline();
     drawReviewSpectrum();
     updateTimeLabel();
@@ -548,23 +568,9 @@
     playSource = playCtx.createBufferSource();
     playSource.buffer = playBuffer;
     playSource.connect(playCtx.destination);
-    playSource.onended = () => {
-      if (playing && playCtx && playCtx.currentTime - playStartCtxTime >= duration() - playStartOffset - 0.05) {
-        playing = false;
-        playhead = duration();
-        playBtn.textContent = "▶";
-        playBtn.setAttribute("aria-label", "Play");
-        drawTimeline();
-        updateTimeLabel();
-      }
-    };
     playStartCtxTime = playCtx.currentTime;
     playStartOffset = offset;
     playSource.start(0, offset);
-  }
-
-  function restartPlaybackAt(offset) {
-    startSourceAt(offset);
   }
 
   function stopSource() {
@@ -598,6 +604,7 @@
     updateTimeLabel();
     if (playhead >= duration()) {
       playing = false;
+      stopSource();
       playBtn.textContent = "▶";
       playBtn.setAttribute("aria-label", "Play");
       return;
@@ -612,6 +619,7 @@
       playCtx.close();
       playCtx = null;
     }
+    playBtn.textContent = "▶";
     recBuffer = null;
     playBuffer = null;
     gram = null;
@@ -619,7 +627,7 @@
     playhead = 0;
   }
 
-  // ---------- WAV export (16-bit PCM mono) ----------
+  // ---------- WAV export ----------
   exportBtn.addEventListener("click", () => {
     if (!recBuffer) return;
     const blob = encodeWav(recBuffer, recRate);
@@ -645,13 +653,13 @@
     v.setUint32(4, 36 + n * 2, true);
     writeStr(8, "WAVE");
     writeStr(12, "fmt ");
-    v.setUint32(16, 16, true);        // PCM chunk size
-    v.setUint16(20, 1, true);         // PCM format
-    v.setUint16(22, 1, true);         // mono
+    v.setUint32(16, 16, true);
+    v.setUint16(20, 1, true);
+    v.setUint16(22, 1, true);
     v.setUint32(24, rate, true);
-    v.setUint32(28, rate * 2, true);  // byte rate
-    v.setUint16(32, 2, true);         // block align
-    v.setUint16(34, 16, true);        // bits per sample
+    v.setUint32(28, rate * 2, true);
+    v.setUint16(32, 2, true);
+    v.setUint16(34, 16, true);
     writeStr(36, "data");
     v.setUint32(40, n * 2, true);
     let off = 44;
@@ -664,12 +672,596 @@
   }
 
   // ============================================================
+  // FILE LOADING (.wav, .mp3, .m4a, .mp4 — anything the browser decodes)
+  // ============================================================
+
+  loadInput.addEventListener("change", async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    hideError();
+    let ctx = null;
+    try {
+      const ab = await file.arrayBuffer();
+      const AC = window.AudioContext || window.webkitAudioContext;
+      ctx = new AC();
+      const audio = await ctx.decodeAudioData(ab);
+      let ch = audio.getChannelData(0);
+      const maxLen = Math.floor(audio.sampleRate * MAX_REC_SECONDS);
+      const samples = new Float32Array(
+        ch.length > maxLen ? ch.subarray(0, maxLen) : ch
+      );
+      const rate = audio.sampleRate;
+      ctx.close();
+      ctx = null;
+      await openInReview(samples, rate);
+    } catch (err) {
+      if (ctx) ctx.close();
+      showError(
+        "Could not decode that file. Try a .wav, .mp3, .m4a, or .mp4 with an audio track."
+      );
+    }
+  });
+
+  // Make the label act like a button for keyboard users
+  loadLabel.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      loadInput.click();
+    }
+  });
+
+  // ============================================================
+  // SIMULATE TAB
+  // ============================================================
+
+  const CFC_STORE_KEY = "chatterx-cfc-presets";
+  const SIM_STORE_KEY = "chatterx-sim-inputs";
+
+  // Built-in coefficient sets. Values are N/mm² (cutting) and N/mm (edge).
+  // "Typical" sets are approximate literature-style starting points — edit
+  // to match measured data for real predictions.
+  const BUILTIN_CFC = [
+    {
+      name: "Measured set (default)",
+      Ktc: 1720.33, Krc: 628.99, Kac: -11.23,
+      Kte: 76.12, Kre: 118.32, Kae: 30.84,
+    },
+    {
+      name: "Aluminum alloy (typical)",
+      Ktc: 750, Krc: 250, Kac: 0,
+      Kte: 0, Kre: 0, Kae: 0,
+    },
+    {
+      name: "Low-carbon steel (typical)",
+      Ktc: 2100, Krc: 700, Kac: 0,
+      Kte: 0, Kre: 0, Kae: 0,
+    },
+  ];
+
+  const cfcPreset = $("cfcPreset");
+  const cfcFields = ["Ktc", "Krc", "Kac", "Kte", "Kre", "Kae"];
+  const savePresetBtn = $("savePresetBtn");
+  const delPresetBtn = $("delPresetBtn");
+  const modeRows = $("modeRows");
+  const addModeBtn = $("addModeBtn");
+  const runSimBtn = $("runSimBtn");
+  const simProgress = $("simProgress");
+  const simProgressFill = $("simProgressFill");
+  const simResults = $("simResults");
+  const simError = $("simError");
+  const playSimBtn = $("playSimBtn");
+  const sendBtn = $("sendBtn");
+  const forceChan = $("forceChan");
+  const forcePlot = $("forcePlot");
+  const soundPlot = $("soundPlot");
+  const forceStats = $("forceStats");
+  const soundStats = $("soundStats");
+
+  let customPresets = loadJson(CFC_STORE_KEY, []);
+  let simWorker = null;
+  let simAudio = null;   // { samples: Float32Array, rate, metric, fs }
+  let simRaw = null;     // { fx, fy, xt, fs, res (lazy) }
+  let simPlayCtx = null;
+  let simPlaySource = null;
+  let simPlayT0 = 0;     // playCtx time at start, for the playhead
+
+  function loadJson(key, fallback) {
+    try {
+      const s = localStorage.getItem(key);
+      return s ? JSON.parse(s) : fallback;
+    } catch (e) {
+      return fallback;
+    }
+  }
+
+  function saveJson(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch (e) { /* storage full or unavailable */ }
+  }
+
+  // ---------- CFC preset UI ----------
+  function refreshPresetSelect(selectName) {
+    cfcPreset.innerHTML = "";
+    const all = BUILTIN_CFC.concat(customPresets);
+    all.forEach((p, i) => {
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = p.name;
+      cfcPreset.appendChild(opt);
+    });
+    const idx = selectName
+      ? all.findIndex((p) => p.name === selectName)
+      : 0;
+    cfcPreset.value = String(Math.max(idx, 0));
+    applyPreset();
+  }
+
+  function currentPreset() {
+    const all = BUILTIN_CFC.concat(customPresets);
+    return all[Number(cfcPreset.value)] || all[0];
+  }
+
+  function applyPreset() {
+    const p = currentPreset();
+    cfcFields.forEach((f) => ($("c" + f).value = p[f]));
+    delPresetBtn.hidden = Number(cfcPreset.value) < BUILTIN_CFC.length;
+  }
+
+  cfcPreset.addEventListener("change", applyPreset);
+
+  savePresetBtn.addEventListener("click", () => {
+    const name = prompt("Preset name (e.g. \"6061-T6 / 12.7 mm carbide\"):");
+    if (!name) return;
+    const p = { name: name.trim() };
+    cfcFields.forEach((f) => (p[f] = Number($("c" + f).value) || 0));
+    const existing = customPresets.findIndex((x) => x.name === p.name);
+    if (existing >= 0) customPresets[existing] = p;
+    else customPresets.push(p);
+    saveJson(CFC_STORE_KEY, customPresets);
+    refreshPresetSelect(p.name);
+  });
+
+  delPresetBtn.addEventListener("click", () => {
+    const idx = Number(cfcPreset.value) - BUILTIN_CFC.length;
+    if (idx < 0) return;
+    customPresets.splice(idx, 1);
+    saveJson(CFC_STORE_KEY, customPresets);
+    refreshPresetSelect();
+  });
+
+  // ---------- dynamics modes editor ----------
+  const DEFAULT_MODES = [
+    { fn: 500, k: 10, zeta: 0.05 },
+    { fn: 1000, k: 4, zeta: 0.02 },
+    { fn: 2300, k: 5, zeta: 0.03 },
+  ];
+
+  function addModeRow(m) {
+    const row = document.createElement("div");
+    row.className = "modes-row";
+    row.innerHTML = `
+      <input type="number" step="any" inputmode="decimal" class="m-fn" value="${m.fn}">
+      <input type="number" step="any" inputmode="decimal" class="m-k" value="${m.k}">
+      <input type="number" step="any" inputmode="decimal" class="m-z" value="${m.zeta}">
+      <button class="mode-del" aria-label="Remove mode">✕</button>`;
+    row.querySelector(".mode-del").addEventListener("click", () => row.remove());
+    modeRows.appendChild(row);
+  }
+
+  function readModes() {
+    const rows = modeRows.querySelectorAll(".modes-row");
+    const out = [];
+    rows.forEach((r) => {
+      const fn = Number(r.querySelector(".m-fn").value);
+      const k = Number(r.querySelector(".m-k").value);
+      const zeta = Number(r.querySelector(".m-z").value);
+      if (fn > 0 && k > 0 && zeta > 0) out.push({ fn, k, zeta });
+    });
+    return out;
+  }
+
+  addModeBtn.addEventListener("click", () =>
+    addModeRow({ fn: 1000, k: 5, zeta: 0.03 })
+  );
+
+  // ---------- persistence of sim inputs ----------
+  const SIM_FIELDS = ["sOmega", "sB", "sNt", "sD", "sBeta", "sFt", "sRd", "sUd", "sRevs", "sStepsRev", "sAxial"];
+
+  function persistSimInputs() {
+    const data = { fields: {}, modes: readModes(), preset: currentPreset().name };
+    SIM_FIELDS.forEach((id) => (data.fields[id] = $(id).value));
+    cfcFields.forEach((f) => (data.fields["c" + f] = $("c" + f).value));
+    saveJson(SIM_STORE_KEY, data);
+  }
+
+  function restoreSimInputs() {
+    const data = loadJson(SIM_STORE_KEY, null);
+    refreshPresetSelect(data && data.preset);
+    (data && data.modes && data.modes.length ? data.modes : DEFAULT_MODES).forEach(addModeRow);
+    if (data && data.fields) {
+      Object.keys(data.fields).forEach((id) => {
+        const el = $(id);
+        if (el) el.value = data.fields[id];
+      });
+    }
+  }
+
+  // ---------- run simulation ----------
+  runSimBtn.addEventListener("click", () => {
+    if (simWorker) return; // already running
+    simError.hidden = true;
+
+    const num = (id) => Number($(id).value);
+    const omega = num("sOmega");
+    const b = num("sB") * 1e-3;
+    const Nt = Math.round(num("sNt"));
+    const d = num("sD") * 1e-3;
+    const beta = num("sBeta");
+    const ft = num("sFt") * 1e-3;
+    let rd = num("sRd") * 1e-3;
+    const ud = Number($("sUd").value);
+    const numRevs = Math.round(num("sRevs"));
+    const stepsRev = Math.round(num("sStepsRev"));
+    const stepsAxial = Math.round(num("sAxial"));
+
+    if (!(omega > 0 && b > 0 && Nt >= 1 && d > 0 && ft > 0 && rd > 0 &&
+          numRevs >= 10 && stepsRev >= 360 && stepsAxial >= 1)) {
+      showSimError("Check the inputs — every value must be a positive number.");
+      return;
+    }
+    if (rd > d) rd = d; // radial depth cannot exceed diameter
+    if (numRevs * stepsRev > 20e6) {
+      showSimError("That is a very large run (revolutions × steps/rev > 20M). Reduce one of them.");
+      return;
+    }
+
+    // SI conversion: N/mm² → N/m², N/mm → N/m; k N/µm → N/m; fn Hz → rad/s
+    const K = {};
+    cfcFields.forEach((f) => (K[f] = Number($("c" + f).value) || 0));
+    const modes = readModes().map((m) => ({
+      wn: m.fn * 2 * Math.PI,
+      k: m.k * 1e6,
+      zeta: m.zeta,
+    }));
+
+    persistSimInputs();
+
+    simResults.hidden = true;
+    stopSimPlayback();
+    simAudio = null;
+    simRaw = null;
+    simProgress.hidden = false;
+    simProgressFill.style.width = "0%";
+    runSimBtn.textContent = "RUNNING…";
+    runSimBtn.disabled = true;
+
+    simWorker = new Worker("./sim-worker.js");
+    simWorker.onmessage = (e) => {
+      const msg = e.data;
+      if (msg.type === "progress") {
+        simProgressFill.style.width = (msg.value * 100).toFixed(1) + "%";
+      } else if (msg.type === "done") {
+        finishSim(msg, modes.length > 0);
+      } else if (msg.type === "error") {
+        showSimError("Simulation failed: " + msg.message);
+        resetSimUi();
+      }
+    };
+    simWorker.onerror = (err) => {
+      showSimError("Simulation failed: " + (err.message || "worker error"));
+      resetSimUi();
+    };
+
+    simWorker.postMessage({
+      Ktc: K.Ktc * 1e6, Krc: K.Krc * 1e6,
+      Kte: K.Kte * 1e3, Kre: K.Kre * 1e3,
+      omega, b, d, Nt, beta, ft, rd, ud,
+      modes, numRevs, stepsRev, stepsAxial,
+    });
+  });
+
+  function finishSim(msg, hasModes) {
+    resetSimUi();
+
+    // Sonify tool displacement when the tool is flexible (that's the
+    // vibration you hear); fall back to force for a rigid tool.
+    const src = hasModes ? msg.xt : msg.fx;
+    const samples = resampleToRate(src, msg.fs, AUDIO_RATE);
+    normalizePeak(samples, 0.7);
+
+    simAudio = {
+      samples,
+      rate: AUDIO_RATE,
+      metric: msg.metric,
+      fs: msg.fs,
+    };
+    simRaw = { fx: msg.fx, fy: msg.fy, xt: msg.xt, fs: msg.fs, res: null };
+
+    $("rMetric").textContent = Number.isFinite(msg.metric)
+      ? msg.metric.toPrecision(3) + " µm"
+      : "–";
+    $("rDur").textContent = (samples.length / AUDIO_RATE).toFixed(2) + " s";
+    $("rFs").textContent = (msg.fs / 1000).toFixed(1) + " kHz → 48 kHz";
+    simResults.hidden = false;
+
+    // canvases need layout before they have a width
+    requestAnimationFrame(() => {
+      drawForcePlot();
+      drawSoundPlot(null);
+      simResults.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }
+
+  // ---------- result plots ----------
+
+  function forceData() {
+    const ch = forceChan.value;
+    if (ch === "fx") return simRaw.fx;
+    if (ch === "fy") return simRaw.fy;
+    if (!simRaw.res) {
+      const n = simRaw.fx.length;
+      const r = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        r[i] = Math.hypot(simRaw.fx[i], simRaw.fy[i]);
+      }
+      simRaw.res = r;
+    }
+    return simRaw.res;
+  }
+
+  // Per-pixel min/max envelope of a long signal.
+  function envelope(data, w) {
+    const mins = new Float32Array(w);
+    const maxs = new Float32Array(w);
+    const n = data.length;
+    for (let px = 0; px < w; px++) {
+      const a = Math.floor((px * n) / w);
+      const b = Math.max(a + 1, Math.floor(((px + 1) * n) / w));
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let i = a; i < b && i < n; i++) {
+        const v = data[i];
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+      mins[px] = lo;
+      maxs[px] = hi;
+    }
+    return { mins, maxs };
+  }
+
+  function prepPlotCanvas(canvas) {
+    const dpr = DPR();
+    const cssW = canvas.clientWidth;
+    const cssH = canvas.clientHeight;
+    if (cssW === 0 || cssH === 0) return null;
+    const w = Math.round(cssW * dpr);
+    const h = Math.round(cssH * dpr);
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+    return { ctx, w: cssW, h: cssH };
+  }
+
+  function drawWave(canvas, data, color) {
+    const p = prepPlotCanvas(canvas);
+    if (!p) return null;
+    const { ctx, w, h } = p;
+    const pad = 4;
+
+    const { mins, maxs } = envelope(data, w);
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let i = 0; i < w; i++) {
+      if (mins[i] < lo) lo = mins[i];
+      if (maxs[i] > hi) hi = maxs[i];
+    }
+    if (!(hi > lo)) {
+      hi = lo + 1;
+    }
+    const span = hi - lo;
+    const yOf = (v) => pad + (1 - (v - lo) / span) * (h - 2 * pad);
+
+    // zero line if zero is in range
+    if (lo <= 0 && hi >= 0) {
+      ctx.strokeStyle = "rgba(44, 51, 62, 0.9)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, yOf(0));
+      ctx.lineTo(w, yOf(0));
+      ctx.stroke();
+    }
+
+    // filled min/max envelope
+    ctx.beginPath();
+    for (let x = 0; x < w; x++) {
+      const y = yOf(maxs[x]);
+      if (x === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    for (let x = w - 1; x >= 0; x--) {
+      ctx.lineTo(x, yOf(mins[x]));
+    }
+    ctx.closePath();
+    ctx.fillStyle = color.fill;
+    ctx.fill();
+    ctx.strokeStyle = color.line;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    return { hi, lo, w, h };
+  }
+
+  function drawForcePlot() {
+    if (!simRaw) return;
+    const info = drawWave(forcePlot, forceData(), {
+      line: "#7FD8E8",
+      fill: "rgba(127, 216, 232, 0.14)",
+    });
+    if (info) {
+      const peak = Math.max(Math.abs(info.hi), Math.abs(info.lo));
+      forceStats.textContent = "peak " + fmtForce(peak);
+    }
+  }
+
+  function drawSoundPlot(playT) {
+    if (!simAudio) return;
+    const info = drawWave(soundPlot, simAudio.samples, {
+      line: "#FFB24D",
+      fill: "rgba(255, 178, 77, 0.14)",
+    });
+    if (!info) return;
+    const dur = simAudio.samples.length / simAudio.rate;
+    soundStats.textContent = dur.toFixed(2) + " s";
+    if (playT != null && dur > 0) {
+      const ctx = soundPlot.getContext("2d");
+      const x = clamp(playT / dur, 0, 1) * info.w;
+      ctx.strokeStyle = "#7FD8E8";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, info.h);
+      ctx.stroke();
+    }
+  }
+
+  function fmtForce(n) {
+    return n >= 1000 ? (n / 1000).toFixed(2) + " kN" : n.toFixed(1) + " N";
+  }
+
+  forceChan.addEventListener("change", drawForcePlot);
+
+  window.addEventListener("resize", () => {
+    if (simRaw && !simResults.hidden) {
+      drawForcePlot();
+      drawSoundPlot(simPlaySource ? currentSimPlayT() : null);
+    }
+  });
+
+  function resetSimUi() {
+    if (simWorker) {
+      simWorker.terminate();
+      simWorker = null;
+    }
+    simProgress.hidden = true;
+    runSimBtn.textContent = "RUN SIMULATION";
+    runSimBtn.disabled = false;
+  }
+
+  function showSimError(msg) {
+    simError.textContent = msg;
+    simError.hidden = false;
+  }
+
+  // Box-filtered resampling (prefix sums) for decimation; linear for upsampling.
+  function resampleToRate(x, fsIn, fsOut) {
+    const outLen = Math.max(1, Math.floor((x.length * fsOut) / fsIn));
+    const out = new Float32Array(outLen);
+    const ratio = fsIn / fsOut;
+
+    if (ratio <= 1) {
+      for (let n = 0; n < outLen; n++) {
+        const t = n * ratio;
+        const i = Math.floor(t);
+        const fr = t - i;
+        const a = x[Math.min(i, x.length - 1)];
+        const b = x[Math.min(i + 1, x.length - 1)];
+        out[n] = a + (b - a) * fr;
+      }
+      return out;
+    }
+
+    // moving-average anti-alias then decimate
+    const pre = new Float64Array(x.length + 1);
+    for (let i = 0; i < x.length; i++) pre[i + 1] = pre[i] + x[i];
+    const half = ratio / 2;
+    for (let n = 0; n < outLen; n++) {
+      const c = n * ratio;
+      let a = Math.max(0, Math.round(c - half));
+      let b = Math.min(x.length, Math.round(c + half));
+      if (b <= a) b = a + 1;
+      out[n] = (pre[b] - pre[a]) / (b - a);
+    }
+    return out;
+  }
+
+  function normalizePeak(x, target) {
+    let peak = 0;
+    for (let i = 0; i < x.length; i++) {
+      const a = Math.abs(x[i]);
+      if (a > peak) peak = a;
+    }
+    if (peak < 1e-12) return;
+    const s = target / peak;
+    for (let i = 0; i < x.length; i++) x[i] *= s;
+  }
+
+  // ---------- quick play in sim tab ----------
+  function currentSimPlayT() {
+    return simPlayCtx ? simPlayCtx.currentTime - simPlayT0 : 0;
+  }
+
+  function simPlayheadRaf() {
+    if (!simPlaySource) return;
+    drawSoundPlot(currentSimPlayT());
+    requestAnimationFrame(simPlayheadRaf);
+  }
+
+  playSimBtn.addEventListener("click", async () => {
+    if (!simAudio) return;
+    if (simPlaySource) {
+      stopSimPlayback();
+      return;
+    }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!simPlayCtx) simPlayCtx = new AC();
+    if (simPlayCtx.state === "suspended") await simPlayCtx.resume();
+    const buf = simPlayCtx.createBuffer(1, simAudio.samples.length, simAudio.rate);
+    buf.copyToChannel(simAudio.samples, 0);
+    simPlaySource = simPlayCtx.createBufferSource();
+    simPlaySource.buffer = buf;
+    simPlaySource.connect(simPlayCtx.destination);
+    simPlaySource.onended = () => stopSimPlayback();
+    simPlayT0 = simPlayCtx.currentTime;
+    simPlaySource.start();
+    playSimBtn.textContent = "■ STOP";
+    simPlayheadRaf();
+  });
+
+  function stopSimPlayback() {
+    if (simPlaySource) {
+      simPlaySource.onended = null;
+      try { simPlaySource.stop(); } catch (e) {}
+      simPlaySource = null;
+      drawSoundPlot(null); // clear the playhead
+    }
+    playSimBtn.textContent = "▶ PLAY";
+  }
+
+  // ---------- send to analyzer ----------
+  sendBtn.addEventListener("click", async () => {
+    if (!simAudio) return;
+    stopSimPlayback();
+    if (mode === "live") stopLive(true); // discard any live capture
+    switchTab("analyze");
+    // copy so the sim result can be sent again later
+    await openInReview(new Float32Array(simAudio.samples), simAudio.rate);
+  });
+
+  // ============================================================
   // DRAWING (shared)
   // ============================================================
 
   function drawSpectrumTrace(mags, maxBin, hzPerBin, peaks, startBin) {
     const w = specCanvas.clientWidth;
     const h = specCanvas.clientHeight;
+    if (w === 0 || h === 0) return;
     const ctx = specCtx;
 
     ctx.clearRect(0, 0, w, h);
@@ -712,6 +1304,7 @@
   }
 
   function drawGrid(ctx, w, h) {
+    if (w === 0 || h === 0) return;
     ctx.strokeStyle = "rgba(44, 51, 62, 0.8)";
     ctx.fillStyle = "#8A919C";
     ctx.lineWidth = 1;
@@ -739,11 +1332,11 @@
     return h - clamp(t, 0, 1) * h;
   }
 
-  // live spectrogram: scroll left, newest column at right (device pixels)
   function drawLiveGramColumn(mags, maxBin) {
     const ctx = gramCtx;
     const pw = gramCanvas.width;
     const ph = gramCanvas.height;
+    if (pw === 0 || ph === 0) return;
     const col = 2;
 
     ctx.save();
@@ -769,7 +1362,6 @@
     gramCtx.restore();
   }
 
-  // Dark → ember → amber → near-white heat map. t in [0,1].
   function heat(t) {
     if (t < 0.35) {
       const k = t / 0.35;
@@ -783,21 +1375,21 @@
   }
 
   // ============================================================
-  // UI
+  // UI STATE
   // ============================================================
 
   function setMode(next) {
-    // leaving review: free memory
     if (mode === "review" && next !== "review") teardownReview();
 
     mode = next;
-    appEl.dataset.mode = mode;
 
-    statusEl.className = "status" + (mode === "live" ? " live" : mode === "review" ? " review" : "");
+    statusEl.className =
+      "status" + (mode === "live" ? " live" : mode === "review" ? " review" : "");
     statusText.textContent =
       mode === "live" ? "listening" : mode === "review" ? "review" : "idle";
 
     transport.hidden = mode !== "review";
+    loadLabel.hidden = mode !== "idle";
     gramTitle.textContent = mode === "review" ? "SESSION TIMELINE" : "SPECTROGRAM";
     gramNote.textContent = mode === "review" ? "tap or drag to scrub" : "time →";
 
@@ -821,7 +1413,7 @@
 
   toggleBtn.addEventListener("click", () => {
     if (mode === "idle") startLive();
-    else if (mode === "live") stopLive();
+    else if (mode === "live") stopLive(false);
     else setMode("idle");
   });
 
@@ -875,7 +1467,6 @@
 
   FFT.prototype.transform = function (re, im) {
     const n = this.size;
-    // bit-reversal permutation
     for (let i = 0; i < n; i++) {
       let j = 0;
       for (let k = 0; k < this.levels; k++) j = (j << 1) | ((i >>> k) & 1);
@@ -920,8 +1511,6 @@
   }
 
   function nextFrame() {
-    // rAF stalls when the tab is hidden (e.g. auto-stop on backgrounding),
-    // so fall back to a timeout to keep the timeline build moving.
     return document.hidden
       ? new Promise((r) => setTimeout(r, 0))
       : new Promise((r) => requestAnimationFrame(r));
@@ -946,10 +1535,8 @@
     errorMsg.hidden = true;
   }
 
-  // Live capture can't continue in the background — stop cleanly into
-  // review so the recording so far is kept. Review mode survives.
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden && mode === "live") stopLive();
+    if (document.hidden && mode === "live") stopLive(false);
   });
 
   // ---------- iOS install hint ----------
@@ -976,6 +1563,7 @@
   }
 
   // ---------- init ----------
+  restoreSimInputs();
   requestAnimationFrame(() => {
     fitCanvas(specCanvas, specCtx, false);
     fitCanvas(gramCanvas, gramCtx, false);
