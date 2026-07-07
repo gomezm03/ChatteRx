@@ -1148,7 +1148,8 @@
     $("rMetric").textContent = Number.isFinite(msg.metric)
       ? msg.metric.toPrecision(3) + " µm"
       : "–";
-    $("rDur").textContent = (samples.length / AUDIO_RATE).toFixed(2) + " s";
+    $("rDur").textContent =
+      (simAudio.samples.length / AUDIO_RATE).toFixed(2) + " s";
     const ftooth = simRunMeta ? (simRunMeta.Nt * simRunMeta.omega) / 60 : 0;
     $("rFtooth").textContent = ftooth > 0 ? fmtHz(ftooth) : "–";
     simResults.hidden = false;
