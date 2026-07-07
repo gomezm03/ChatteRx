@@ -7,7 +7,8 @@
    Input message (all SI units):
      { Ktc, Krc, Kte, Kre,            cutting/edge coefficients
        omega, b, d, Nt, beta, ft, rd, ud,
-       modes: [{ wn (rad/s), k (N/m), zeta }],   tool-point, X and Y
+       modesX: [{ wn (rad/s), k (N/m), zeta }],  tool-point, X direction
+       modesY: [{ wn (rad/s), k (N/m), zeta }],  tool-point, Y direction
        numRevs, stepsRev, stepsAxial }
 
    Output messages:
@@ -17,7 +18,7 @@
 
    Notes vs. the Python original:
    - Uniform pitch, zero runout, no process damping (Ct = Cr = 0),
-     rigid workpiece; identical mode set applied to X and Y.
+     rigid workpiece; independent mode sets in X and Y.
    - Kac/Kae omitted: they only produce Fz, which we don't use.
    - Steady state = second half of the record (fraction = 0.5).
    - Stability metric = per-rev sampling of xt (SAMPLE_MODE="per_rev"),
@@ -38,7 +39,7 @@ function run(p) {
   const {
     Ktc, Krc, Kte, Kre,
     omega, b, d, Nt, beta, ft, rd, ud,
-    modes, numRevs, stepsRev, stepsAxial,
+    modesX, modesY, numRevs, stepsRev, stepsAxial,
   } = p;
 
   // --- engagement angles (deg) ---
@@ -94,24 +95,30 @@ function run(p) {
   // --- surface regeneration store: (disk, angular index) ---
   const surface = new Float64Array(stepsAxial * stepsRev);
 
-  // --- modal state (same modes in X and Y) ---
-  const nm = modes.length;
-  const mk = new Float64Array(nm);
-  const mc = new Float64Array(nm);
-  const mmass = new Float64Array(nm);
-  for (let i = 0; i < nm; i++) {
-    const k = modes[i].k;
-    const wn = modes[i].wn;
-    const zeta = modes[i].zeta;
-    const mass = k / (wn * wn);
-    mk[i] = k;
-    mmass[i] = mass;
-    mc[i] = 2 * zeta * Math.sqrt(mass * k);
+  // --- modal state (independent X and Y mode sets) ---
+  function buildModal(list) {
+    const n = list.length;
+    const out = {
+      n,
+      k: new Float64Array(n),
+      c: new Float64Array(n),
+      m: new Float64Array(n),
+      p: new Float64Array(n),
+      dp: new Float64Array(n),
+    };
+    for (let i = 0; i < n; i++) {
+      const k = list[i].k;
+      const wn = list[i].wn;
+      const zeta = list[i].zeta;
+      const mass = k / (wn * wn);
+      out.k[i] = k;
+      out.m[i] = mass;
+      out.c[i] = 2 * zeta * Math.sqrt(mass * k);
+    }
+    return out;
   }
-  const pt = new Float64Array(nm);
-  const dpt = new Float64Array(nm);
-  const qt = new Float64Array(nm);
-  const dqt = new Float64Array(nm);
+  const mx = buildModal(modesX);
+  const my = buildModal(modesY);
 
   // --- outputs ---
   const xt = new Float32Array(steps);
@@ -161,19 +168,20 @@ function run(p) {
     fx[cnt] = Fx;
     fy[cnt] = Fy;
 
-    // Euler integration — tool modes, X and Y
+    // Euler integration — tool modes, X and Y independently
     sxt = 0;
+    for (let m = 0; m < mx.n; m++) {
+      const dd = (Fx - mx.c[m] * mx.dp[m] - mx.k[m] * mx.p[m]) / mx.m[m];
+      mx.dp[m] += dd * dt;
+      mx.p[m] += mx.dp[m] * dt;
+      sxt += mx.p[m];
+    }
     syt = 0;
-    for (let m = 0; m < nm; m++) {
-      let dd = (Fx - mc[m] * dpt[m] - mk[m] * pt[m]) / mmass[m];
-      dpt[m] += dd * dt;
-      pt[m] += dpt[m] * dt;
-      sxt += pt[m];
-
-      dd = (Fy - mc[m] * dqt[m] - mk[m] * qt[m]) / mmass[m];
-      dqt[m] += dd * dt;
-      qt[m] += dqt[m] * dt;
-      syt += qt[m];
+    for (let m = 0; m < my.n; m++) {
+      const dd = (Fy - my.c[m] * my.dp[m] - my.k[m] * my.p[m]) / my.m[m];
+      my.dp[m] += dd * dt;
+      my.p[m] += my.dp[m] * dt;
+      syt += my.p[m];
     }
     xt[cnt] = sxt;
 

@@ -551,6 +551,36 @@ input:focus-visible,
 .mini-play { color: var(--marker); border-color: var(--marker); }
 .mini-send { color: var(--trace); border-color: var(--trace); }
 
+/* collapsible panel (CFC) */
+
+.collapse-head {
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.collapse-head::-webkit-details-marker { display: none; }
+
+.chev {
+  display: inline-block;
+  margin-right: 7px;
+  color: var(--trace);
+  transition: transform 0.15s ease;
+}
+
+details[open] .chev { transform: rotate(90deg); }
+
+.form-grid select {
+  width: 100%;
+  background: var(--panel-deep);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-family: var(--mono);
+  font-size: 14px;
+  padding: 9px 10px;
+}
+
 /* modes editor */
 
 .modes-head,

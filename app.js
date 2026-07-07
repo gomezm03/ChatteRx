@@ -27,6 +27,8 @@
   const STORE_MAX_HZ = 10000;
 
   const AUDIO_RATE = 48000;       // rate for simulation-rendered audio
+  const SIM_STEPS_REV = 7200;     // fixed simulation internals
+  const SIM_AXIAL = 50;
 
   // ---------- state ----------
   let mode = "idle";              // idle | live | review
@@ -740,11 +742,12 @@
   ];
 
   const cfcPreset = $("cfcPreset");
+  const cfcSummary = $("cfcSummary");
   const cfcFields = ["Ktc", "Krc", "Kac", "Kte", "Kre", "Kae"];
   const savePresetBtn = $("savePresetBtn");
   const delPresetBtn = $("delPresetBtn");
-  const modeRows = $("modeRows");
-  const addModeBtn = $("addModeBtn");
+  const modeRowsX = $("modeRowsX");
+  const modeRowsY = $("modeRowsY");
   const runSimBtn = $("runSimBtn");
   const simProgress = $("simProgress");
   const simProgressFill = $("simProgressFill");
@@ -806,6 +809,7 @@
   function applyPreset() {
     const p = currentPreset();
     cfcFields.forEach((f) => ($("c" + f).value = p[f]));
+    cfcSummary.textContent = p.name;
     delPresetBtn.hidden = Number(cfcPreset.value) < BUILTIN_CFC.length;
   }
 
@@ -838,7 +842,7 @@
     { fn: 2300, k: 5, zeta: 0.03 },
   ];
 
-  function addModeRow(m) {
+  function addModeRow(container, m) {
     const row = document.createElement("div");
     row.className = "modes-row";
     row.innerHTML = `
@@ -847,11 +851,11 @@
       <input type="number" step="any" inputmode="decimal" class="m-z" value="${m.zeta}">
       <button class="mode-del" aria-label="Remove mode">✕</button>`;
     row.querySelector(".mode-del").addEventListener("click", () => row.remove());
-    modeRows.appendChild(row);
+    container.appendChild(row);
   }
 
-  function readModes() {
-    const rows = modeRows.querySelectorAll(".modes-row");
+  function readModes(container) {
+    const rows = container.querySelectorAll(".modes-row");
     const out = [];
     rows.forEach((r) => {
       const fn = Number(r.querySelector(".m-fn").value);
@@ -862,15 +866,31 @@
     return out;
   }
 
-  addModeBtn.addEventListener("click", () =>
-    addModeRow({ fn: 1000, k: 5, zeta: 0.03 })
+  function setModes(container, list) {
+    container.innerHTML = "";
+    list.forEach((m) => addModeRow(container, m));
+  }
+
+  $("addModeXBtn").addEventListener("click", () =>
+    addModeRow(modeRowsX, { fn: 1000, k: 5, zeta: 0.03 })
+  );
+  $("addModeYBtn").addEventListener("click", () =>
+    addModeRow(modeRowsY, { fn: 1000, k: 5, zeta: 0.03 })
+  );
+  $("copyXYBtn").addEventListener("click", () =>
+    setModes(modeRowsY, readModes(modeRowsX))
   );
 
   // ---------- persistence of sim inputs ----------
-  const SIM_FIELDS = ["sOmega", "sB", "sNt", "sD", "sBeta", "sFt", "sRd", "sUd", "sRevs", "sStepsRev", "sAxial"];
+  const SIM_FIELDS = ["sOmega", "sB", "sNt", "sD", "sBeta", "sFt", "sRd", "sUd", "sTime"];
 
   function persistSimInputs() {
-    const data = { fields: {}, modes: readModes(), preset: currentPreset().name };
+    const data = {
+      fields: {},
+      modesX: readModes(modeRowsX),
+      modesY: readModes(modeRowsY),
+      preset: currentPreset().name,
+    };
     SIM_FIELDS.forEach((id) => (data.fields[id] = $(id).value));
     cfcFields.forEach((f) => (data.fields["c" + f] = $("c" + f).value));
     saveJson(SIM_STORE_KEY, data);
@@ -879,7 +899,12 @@
   function restoreSimInputs() {
     const data = loadJson(SIM_STORE_KEY, null);
     refreshPresetSelect(data && data.preset);
-    (data && data.modes && data.modes.length ? data.modes : DEFAULT_MODES).forEach(addModeRow);
+    // back-compat: older saves had a single "modes" list for both directions
+    const legacy = data && data.modes && data.modes.length ? data.modes : null;
+    const mx = (data && data.modesX && data.modesX.length && data.modesX) || legacy || DEFAULT_MODES;
+    const my = (data && data.modesY && data.modesY.length && data.modesY) || legacy || DEFAULT_MODES;
+    setModes(modeRowsX, mx);
+    setModes(modeRowsY, my);
     if (data && data.fields) {
       Object.keys(data.fields).forEach((id) => {
         const el = $(id);
@@ -889,6 +914,8 @@
   }
 
   // ---------- run simulation ----------
+  let simRunMeta = null; // { omega, Nt } of the last run, for the results card
+
   runSimBtn.addEventListener("click", () => {
     if (simWorker) return; // already running
     simError.hidden = true;
@@ -902,31 +929,35 @@
     const ft = num("sFt") * 1e-3;
     let rd = num("sRd") * 1e-3;
     const ud = Number($("sUd").value);
-    const numRevs = Math.round(num("sRevs"));
-    const stepsRev = Math.round(num("sStepsRev"));
-    const stepsAxial = Math.round(num("sAxial"));
+    const simTime = num("sTime");
 
-    if (!(omega > 0 && b > 0 && Nt >= 1 && d > 0 && ft > 0 && rd > 0 &&
-          numRevs >= 10 && stepsRev >= 360 && stepsAxial >= 1)) {
+    if (!(omega > 0 && b > 0 && Nt >= 1 && d > 0 && ft > 0 && rd > 0 && simTime > 0)) {
       showSimError("Check the inputs — every value must be a positive number.");
       return;
     }
     if (rd > d) rd = d; // radial depth cannot exceed diameter
-    if (numRevs * stepsRev > 20e6) {
-      showSimError("That is a very large run (revolutions × steps/rev > 20M). Reduce one of them.");
+
+    // Simulation time → whole revolutions (at least 20 so the
+    // steady-state half still contains enough revs for the metric).
+    const numRevs = Math.max(20, Math.round((simTime * omega) / 60));
+    if (numRevs * SIM_STEPS_REV > 40e6) {
+      const maxT = ((40e6 / SIM_STEPS_REV) * 60) / omega;
+      showSimError(
+        "Simulation time too long for this spindle speed — keep it under " +
+          maxT.toFixed(1) + " s."
+      );
       return;
     }
 
     // SI conversion: N/mm² → N/m², N/mm → N/m; k N/µm → N/m; fn Hz → rad/s
     const K = {};
     cfcFields.forEach((f) => (K[f] = Number($("c" + f).value) || 0));
-    const modes = readModes().map((m) => ({
-      wn: m.fn * 2 * Math.PI,
-      k: m.k * 1e6,
-      zeta: m.zeta,
-    }));
+    const toSI = (m) => ({ wn: m.fn * 2 * Math.PI, k: m.k * 1e6, zeta: m.zeta });
+    const modesX = readModes(modeRowsX).map(toSI);
+    const modesY = readModes(modeRowsY).map(toSI);
 
     persistSimInputs();
+    simRunMeta = { omega, Nt };
 
     simResults.hidden = true;
     stopSimPlayback();
@@ -943,7 +974,7 @@
       if (msg.type === "progress") {
         simProgressFill.style.width = (msg.value * 100).toFixed(1) + "%";
       } else if (msg.type === "done") {
-        finishSim(msg, modes.length > 0);
+        finishSim(msg, modesX.length > 0);
       } else if (msg.type === "error") {
         showSimError("Simulation failed: " + msg.message);
         resetSimUi();
@@ -958,7 +989,8 @@
       Ktc: K.Ktc * 1e6, Krc: K.Krc * 1e6,
       Kte: K.Kte * 1e3, Kre: K.Kre * 1e3,
       omega, b, d, Nt, beta, ft, rd, ud,
-      modes, numRevs, stepsRev, stepsAxial,
+      modesX, modesY,
+      numRevs, stepsRev: SIM_STEPS_REV, stepsAxial: SIM_AXIAL,
     });
   });
 
@@ -983,7 +1015,8 @@
       ? msg.metric.toPrecision(3) + " µm"
       : "–";
     $("rDur").textContent = (samples.length / AUDIO_RATE).toFixed(2) + " s";
-    $("rFs").textContent = (msg.fs / 1000).toFixed(1) + " kHz → 48 kHz";
+    const ftooth = simRunMeta ? (simRunMeta.Nt * simRunMeta.omega) / 60 : 0;
+    $("rFtooth").textContent = ftooth > 0 ? fmtHz(ftooth) : "–";
     simResults.hidden = false;
 
     // canvases need layout before they have a width

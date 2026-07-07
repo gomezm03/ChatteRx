@@ -104,13 +104,18 @@
 <section class="tab-panel tab-sim" id="tab-sim" hidden>
 <div class="sim-scroll">
 
-  <!-- Cutting force coefficient database -->
+  <!-- Cutting force coefficient database (collapsed by default) -->
   <section class="panel form-panel">
-    <div class="panel-head">
-      <span class="panel-title">CUTTING FORCE COEFFICIENTS</span>
-      <select id="cfcPreset" class="head-select" aria-label="Coefficient preset"></select>
-    </div>
-    <div class="form-body">
+    <details class="collapse" id="cfcDetails">
+      <summary class="panel-head collapse-head">
+        <span class="panel-title"><span class="chev">▸</span>CUTTING FORCE COEFFICIENTS</span>
+        <span class="panel-note" id="cfcSummary"></span>
+      </summary>
+      <div class="form-body">
+      <div class="form-grid">
+        <label>Preset
+          <select id="cfcPreset" aria-label="Coefficient preset"></select></label>
+      </div>
       <div class="form-grid">
         <label>K<sub>tc</sub> <span class="unit">N/mm²</span>
           <input id="cKtc" type="number" step="any" inputmode="decimal"></label>
@@ -129,7 +134,8 @@
         <button id="savePresetBtn" class="mini-btn">SAVE AS PRESET</button>
         <button id="delPresetBtn" class="mini-btn mini-danger" hidden>DELETE PRESET</button>
       </div>
-    </div>
+      </div>
+    </details>
   </section>
 
   <!-- Operating point -->
@@ -138,7 +144,7 @@
     <div class="form-body">
       <div class="form-grid">
         <label>Spindle speed <span class="unit">rpm</span>
-          <input id="sOmega" type="number" step="any" inputmode="decimal" value="4580"></label>
+          <input id="sOmega" type="number" step="any" inputmode="decimal" value="7500"></label>
         <label>Axial depth b <span class="unit">mm</span>
           <input id="sB" type="number" step="any" inputmode="decimal" value="2"></label>
       </div>
@@ -151,40 +157,56 @@
     <div class="form-body">
       <div class="form-grid">
         <label>Teeth N<sub>t</sub>
-          <input id="sNt" type="number" step="1" min="1" inputmode="numeric" value="1"></label>
+          <input id="sNt" type="number" step="1" min="1" inputmode="numeric" value="4"></label>
         <label>Diameter d <span class="unit">mm</span>
-          <input id="sD" type="number" step="any" inputmode="decimal" value="15.748"></label>
+          <input id="sD" type="number" step="any" inputmode="decimal" value="12.7"></label>
         <label>Helix angle β <span class="unit">deg</span>
           <input id="sBeta" type="number" step="any" inputmode="decimal" value="30"></label>
         <label>Feed/tooth <span class="unit">mm</span>
-          <input id="sFt" type="number" step="any" inputmode="decimal" value="0.12"></label>
+          <input id="sFt" type="number" step="any" inputmode="decimal" value="0.1"></label>
         <label>Radial depth <span class="unit">mm</span>
-          <input id="sRd" type="number" step="any" inputmode="decimal" value="15.748"></label>
+          <input id="sRd" type="number" step="any" inputmode="decimal" value="3.175"></label>
         <label>Direction
           <select id="sUd">
             <option value="2" selected>Down milling</option>
             <option value="1">Up milling</option>
           </select></label>
       </div>
-      <p class="form-note">Radial depth equal to diameter is a slotting cut.</p>
+      <p class="form-note">Radial depth equal to diameter is a slotting cut; the default is a quarter-immersion cut.</p>
     </div>
   </section>
 
-  <!-- Tool-point dynamics -->
+  <!-- Tool-point dynamics: X -->
   <section class="panel form-panel">
     <div class="panel-head">
-      <span class="panel-title">TOOL-POINT DYNAMICS</span>
-      <span class="panel-note">applied to X and Y</span>
+      <span class="panel-title">TOOL-POINT DYNAMICS — X (feed)</span>
     </div>
     <div class="form-body">
       <div class="modes-head">
         <span>f<sub>n</sub> (Hz)</span><span>k (N/µm)</span><span>ζ (–)</span><span></span>
       </div>
-      <div id="modeRows"></div>
+      <div id="modeRowsX"></div>
       <div class="form-actions">
-        <button id="addModeBtn" class="mini-btn">+ ADD MODE</button>
+        <button id="addModeXBtn" class="mini-btn">+ ADD MODE</button>
       </div>
-      <p class="form-note">Remove all modes for a rigid tool — no chatter is possible and the sound comes from the force signal.</p>
+    </div>
+  </section>
+
+  <!-- Tool-point dynamics: Y -->
+  <section class="panel form-panel">
+    <div class="panel-head">
+      <span class="panel-title">TOOL-POINT DYNAMICS — Y</span>
+    </div>
+    <div class="form-body">
+      <div class="modes-head">
+        <span>f<sub>n</sub> (Hz)</span><span>k (N/µm)</span><span>ζ (–)</span><span></span>
+      </div>
+      <div id="modeRowsY"></div>
+      <div class="form-actions">
+        <button id="addModeYBtn" class="mini-btn">+ ADD MODE</button>
+        <button id="copyXYBtn" class="mini-btn">COPY X → Y</button>
+      </div>
+      <p class="form-note">Remove all modes in both directions for a rigid tool — no chatter is possible and the sound comes from the force signal.</p>
     </div>
   </section>
 
@@ -193,14 +215,10 @@
     <div class="panel-head"><span class="panel-title">SIMULATION</span></div>
     <div class="form-body">
       <div class="form-grid">
-        <label>Revolutions
-          <input id="sRevs" type="number" step="1" min="10" inputmode="numeric" value="200"></label>
-        <label>Steps/rev
-          <input id="sStepsRev" type="number" step="1" min="360" inputmode="numeric" value="7200"></label>
-        <label>Axial slices
-          <input id="sAxial" type="number" step="1" min="1" inputmode="numeric" value="50"></label>
+        <label>Simulation time <span class="unit">s</span>
+          <input id="sTime" type="number" step="any" min="0.5" inputmode="decimal" value="3"></label>
       </div>
-      <p class="form-note">Second half of the record is treated as steady state for the metric and the audio.</p>
+      <p class="form-note">Internals are fixed at 7,200 steps/rev and 50 axial slices. The second half of the record is treated as steady state for the metric and the audio.</p>
     </div>
   </section>
 
@@ -226,8 +244,8 @@
           <span class="result-value" id="rDur">–</span>
         </div>
         <div class="result-cell">
-          <span class="result-label">SIM RATE</span>
-          <span class="result-value" id="rFs">–</span>
+          <span class="result-label">TOOTH PASSING FREQ</span>
+          <span class="result-value" id="rFtooth">–</span>
         </div>
       </div>
       <div class="sim-plot">
