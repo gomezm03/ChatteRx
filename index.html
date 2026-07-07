@@ -77,7 +77,7 @@
     <div class="transport" id="transport" hidden>
       <button id="playBtn" class="t-btn t-play" aria-label="Play">▶</button>
       <span class="t-time" id="timeLabel">0:00 / 0:00</span>
-      <button id="modeBtn" class="t-btn t-mode" aria-label="Toggle scrub or select mode">SCRUB</button>
+      <button id="modeBtn" class="t-btn t-mode" aria-label="Toggle seek or select mode">SEEK</button>
       <button id="exportBtn" class="t-btn t-export">.WAV</button>
     </div>
   </section>
@@ -248,15 +248,24 @@
       </div>
       <div class="sim-plot">
         <div class="sim-plot-head">
-          <span class="plot-title">FORCE (N) — steady state</span>
-          <select id="forceChan" class="head-select" aria-label="Force channel">
+          <span class="plot-title" id="timePlotTitle">RESULTANT FORCE (N) — steady state</span>
+          <select id="forceChan" class="head-select" aria-label="Signal channel">
             <option value="res" selected>Resultant</option>
             <option value="fx">Fx</option>
             <option value="fy">Fy</option>
+            <option value="disp">Displacement</option>
           </select>
           <span class="plot-stat" id="forceStats"></span>
         </div>
-        <canvas id="forcePlot" class="sim-canvas"></canvas>
+        <div class="plot-body"><canvas id="forcePlot" class="sim-canvas"></canvas></div>
+      </div>
+
+      <div class="sim-plot">
+        <div class="sim-plot-head">
+          <span class="plot-title" id="fftPlotTitle">FFT (dB) — resultant force</span>
+          <span class="plot-stat" id="fftStats"></span>
+        </div>
+        <div class="plot-body"><canvas id="fftPlot" class="sim-canvas"></canvas></div>
       </div>
 
       <div class="sim-plot">
@@ -264,12 +273,13 @@
           <span class="plot-title">SOUND — normalized amplitude</span>
           <span class="plot-stat" id="soundStats"></span>
         </div>
-        <canvas id="soundPlot" class="sim-canvas"></canvas>
+        <div class="plot-body"><canvas id="soundPlot" class="sim-canvas"></canvas></div>
       </div>
-      <p class="form-note">Drag across a plot to zoom in; double-tap to reset.</p>
+      <p class="form-note">Drag across a plot to zoom in; double-tap to reset. The FFT is computed from the visible window of the signal plot.</p>
 
       <div class="form-actions">
         <button id="playSimBtn" class="mini-btn mini-play">▶ PLAY</button>
+        <button id="linkBtn" class="mini-btn" aria-pressed="false">LINK TIME AXES</button>
         <button id="sendBtn" class="mini-btn mini-send">ANALYZE IN ANALYZER →</button>
       </div>
       <p class="form-note">Play previews the sound right here. Analyzing in the Analyzer is optional — it opens the signal in the session timeline for scrubbing, spectrum inspection, and .wav export.</p>

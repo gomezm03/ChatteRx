@@ -70,7 +70,7 @@
   let playStartOffset = 0;
   let gramView = { a: 0, b: 1 };        // visible fraction of the session
   let selection = null;                  // { a, b } fractions — analysis range
-  let interactMode = "scrub";            // "scrub" | "select"
+  let interactMode = "seek";             // "seek" | "select"
 
   // ---------- elements ----------
   const $ = (id) => document.getElementById(id);
@@ -579,7 +579,7 @@
         " s selected · double-tap resets";
     } else {
       gramNote.textContent =
-        interactMode === "select" ? "drag to select a range" : "tap or drag to scrub";
+        interactMode === "select" ? "drag to select a range" : "tap or drag to seek";
     }
   }
 
@@ -659,7 +659,7 @@
   gramCanvas.addEventListener("pointercancel", endGramPointer);
 
   modeBtn.addEventListener("click", () => {
-    interactMode = interactMode === "scrub" ? "select" : "scrub";
+    interactMode = interactMode === "seek" ? "select" : "seek";
     modeBtn.textContent = interactMode.toUpperCase();
     modeBtn.classList.toggle("sel", interactMode === "select");
     updateGramNote();
@@ -887,9 +887,14 @@
   const sendBtn = $("sendBtn");
   const forceChan = $("forceChan");
   const forcePlot = $("forcePlot");
+  const fftPlot = $("fftPlot");
   const soundPlot = $("soundPlot");
   const forceStats = $("forceStats");
+  const fftStats = $("fftStats");
   const soundStats = $("soundStats");
+  const timePlotTitle = $("timePlotTitle");
+  const fftPlotTitle = $("fftPlotTitle");
+  const linkBtn = $("linkBtn");
 
   let customPresets = loadJson(CFC_STORE_KEY, []);
   let simWorker = null;
@@ -1092,8 +1097,10 @@
     stopSimPlayback();
     simAudio = null;
     simRaw = null;
-    plotViews.force = { a: 0, b: 1 };
+    plotViews.signal = { a: 0, b: 1 };
+    plotViews.fft = { a: 0, b: 1 };
     plotViews.sound = { a: 0, b: 1 };
+    fftData = null;
     simProgress.hidden = false;
     simProgressFill.style.width = "0%";
     runSimBtn.textContent = "RUNNING…";
@@ -1152,7 +1159,9 @@
 
     // canvases need layout before they have a width
     requestAnimationFrame(() => {
-      drawForcePlot();
+      refreshFFT();
+      drawSignalPlot();
+      drawFFTPlot();
       drawSoundPlot(null);
       simResults.scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
@@ -1160,10 +1169,11 @@
 
   // ---------- result plots ----------
 
-  function forceData() {
+  function channelInfo() {
     const ch = forceChan.value;
-    if (ch === "fx") return simRaw.fx;
-    if (ch === "fy") return simRaw.fy;
+    if (ch === "fx") return { data: simRaw.fx, kind: "force", label: "Force Fx", unit: "N" };
+    if (ch === "fy") return { data: simRaw.fy, kind: "force", label: "Force Fy", unit: "N" };
+    if (ch === "disp") return { data: simRaw.xt, kind: "disp", label: "Displacement x", unit: "µm" };
     if (!simRaw.res) {
       const n = simRaw.fx.length;
       const r = new Float32Array(n);
@@ -1172,7 +1182,7 @@
       }
       simRaw.res = r;
     }
-    return simRaw.res;
+    return { data: simRaw.res, kind: "force", label: "Resultant force", unit: "N" };
   }
 
   function prepPlotCanvas(canvas) {
@@ -1196,7 +1206,9 @@
   // FULL-resolution data (honest scaling); the drawn polyline is stride-
   // decimated to ~TRACE_PTS points for responsiveness.
   const TRACE_PTS = 4000;
-  const plotViews = { force: { a: 0, b: 1 }, sound: { a: 0, b: 1 } };
+  const plotViews = { signal: { a: 0, b: 1 }, fft: { a: 0, b: 1 }, sound: { a: 0, b: 1 } };
+  let linkTime = false;
+  let fftData = null; // { db: Float32Array, binHz }
   const plotInfo = {};
 
   function drawTrace(canvas, key, data, color, axes) {
@@ -1253,11 +1265,12 @@
     }
 
     // x tick labels + axis caption (window times)
+    const xFmt = axes.xFmt || ((v) => v.toFixed(2));
     ctx.textBaseline = "top";
     ctx.textAlign = "left";
-    ctx.fillText((axes.xMax * view.a).toFixed(2), L, T + ph + 4);
+    ctx.fillText(xFmt(axes.xMax * view.a), L, T + ph + 4);
     ctx.textAlign = "right";
-    ctx.fillText((axes.xMax * view.b).toFixed(2), L + pw, T + ph + 4);
+    ctx.fillText(xFmt(axes.xMax * view.b), L + pw, T + ph + 4);
     ctx.textAlign = "center";
     ctx.fillText(axes.xLabel, L + pw / 2, T + ph + 4);
 
@@ -1285,7 +1298,33 @@
     return info;
   }
 
-  // drag to zoom, double-tap to reset — shared by both sim plots
+  function redrawPlot(key) {
+    if (key === "signal") drawSignalPlot();
+    else if (key === "fft") drawFFTPlot();
+    else drawSoundPlot(simPlaySource ? currentSimPlayT() : null);
+  }
+
+  function commitView(key, view) {
+    plotViews[key] = view;
+    if (linkTime && (key === "signal" || key === "sound")) {
+      const other = key === "signal" ? "sound" : "signal";
+      plotViews[other] = { a: view.a, b: view.b };
+      redrawPlot(other);
+    }
+    if (key === "signal" || (linkTime && key === "sound")) {
+      refreshFFT(); // FFT tracks the signal plot's visible window
+    }
+    redrawPlot(key);
+  }
+
+  linkBtn.addEventListener("click", () => {
+    linkTime = !linkTime;
+    linkBtn.classList.toggle("on", linkTime);
+    linkBtn.setAttribute("aria-pressed", String(linkTime));
+    if (linkTime) commitView("signal", plotViews.signal); // sync now
+  });
+
+  // drag to zoom, double-tap to reset — shared by the sim plots
   function attachPlotZoom(canvas, key, redraw) {
     let drag = null;
     let lastTap = 0;
@@ -1294,8 +1333,7 @@
       if (now - lastTap < 300) {
         lastTap = 0;
         drag = null;
-        plotViews[key] = { a: 0, b: 1 };
-        redraw();
+        commitView(key, { a: 0, b: 1 });
         return;
       }
       lastTap = now;
@@ -1326,7 +1364,10 @@
         const span = v.b - v.a;
         const lo = clamp((Math.min(d.x0, d.x1) - info.L) / info.pw, 0, 1);
         const hi = clamp((Math.max(d.x0, d.x1) - info.L) / info.pw, 0, 1);
-        if (hi > lo) plotViews[key] = { a: v.a + lo * span, b: v.a + hi * span };
+        if (hi > lo) {
+          commitView(key, { a: v.a + lo * span, b: v.a + hi * span });
+          return;
+        }
       }
       redraw();
     }
@@ -1334,19 +1375,110 @@
     canvas.addEventListener("pointercancel", end);
   }
 
-  function drawForcePlot() {
+  function drawSignalPlot() {
     if (!simRaw) return;
-    const data = forceData();
-    const info = drawTrace(forcePlot, "force", data, {
+    const ch = channelInfo();
+    timePlotTitle.textContent =
+      ch.label.toUpperCase() + " (" + ch.unit + ") — steady state";
+    const isDisp = ch.kind === "disp";
+    const info = drawTrace(forcePlot, "signal", ch.data, {
       line: "#7FD8E8",
     }, {
-      yFmt: fmtForceAxis,
-      xMax: data.length / simRaw.fs,
+      yFmt: isDisp ? fmtDispAxis : fmtForceAxis,
+      xMax: ch.data.length / simRaw.fs,
       xLabel: "time (s)",
     });
     if (info) {
       const peak = Math.max(Math.abs(info.hi), Math.abs(info.lo));
-      forceStats.textContent = "peak " + fmtForce(peak);
+      forceStats.textContent =
+        "peak " + (isDisp ? fmtDisp(peak) : fmtForce(peak));
+    }
+  }
+
+  // ---------- FFT of the signal plot's visible window ----------
+  function refreshFFT() {
+    fftData = null;
+    if (!simRaw) return;
+    const ch = channelInfo();
+    const n = ch.data.length;
+    const v = plotViews.signal;
+    const i0 = Math.floor(v.a * (n - 1));
+    const i1 = Math.max(i0 + 1, Math.ceil(v.b * (n - 1)));
+    const len = i1 - i0;
+
+    let NF = 16384;
+    while (NF > len && NF > 256) NF >>= 1;
+    if (NF < 256) return;
+    const segs = Math.min(16, Math.max(1, Math.floor(len / NF)));
+
+    const fft = new FFT(NF);
+    const win = new Float32Array(NF);
+    for (let i = 0; i < NF; i++) {
+      win[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (NF - 1)));
+    }
+    const norm = 2 / (NF * 0.5); // amplitude, Hann coherent gain 0.5
+    const re = new Float32Array(NF);
+    const im = new Float32Array(NF);
+    const pow = new Float64Array(NF / 2);
+
+    const stride = segs > 1 ? Math.floor((len - NF) / (segs - 1)) : 0;
+    for (let s = 0; s < segs; s++) {
+      const st = i0 + s * stride;
+      for (let i = 0; i < NF; i++) {
+        re[i] = ch.data[st + i] * win[i];
+        im[i] = 0;
+      }
+      fft.transform(re, im);
+      for (let b = 0; b < NF / 2; b++) {
+        const amp = Math.hypot(re[b], im[b]) * norm;
+        pow[b] += amp * amp;
+      }
+    }
+
+    const binHz = simRaw.fs / NF;
+    // default frequency span: 10× tooth passing frequency (Tony's plots)
+    const ftooth = simRunMeta ? (simRunMeta.Nt * simRunMeta.omega) / 60 : 0;
+    const fmax = Math.min(
+      simRaw.fs / 2,
+      ftooth > 0 ? 10 * ftooth : 5000
+    );
+    const bins = Math.max(8, Math.min(NF / 2, Math.ceil(fmax / binHz)));
+    const off = scaleOffset(binHz);
+    const db = new Float32Array(bins);
+    for (let b = 0; b < bins; b++) {
+      db[b] = 10 * Math.log10(pow[b] / segs + 1e-24) + off;
+    }
+    // drop the DC bin (mean force) so it doesn't crush the scale
+    if (bins > 1) db[0] = db[1];
+
+    fftData = { db, binHz };
+  }
+
+  function drawFFTPlot() {
+    if (!fftData) {
+      refreshFFT();
+      if (!fftData) return;
+    }
+    const ch = channelInfo();
+    const unit = settings.scale === "psd" ? "dB/Hz" : "dB";
+    fftPlotTitle.textContent = "FFT (" + unit + ") — " + ch.label.toLowerCase();
+    const info = drawTrace(fftPlot, "fft", fftData.db, {
+      line: "#FFB24D",
+    }, {
+      yFmt: (val) => val.toFixed(0),
+      xMax: fftData.db.length * fftData.binHz,
+      xLabel: "frequency (Hz)",
+      xFmt: (f) => (f >= 1000 ? (f / 1000).toFixed(2) + "k" : Math.round(f).toString()),
+    });
+    if (info) {
+      // dominant bin in the visible window
+      const v = plotViews.fft;
+      const nB = fftData.db.length;
+      const b0 = Math.floor(v.a * (nB - 1));
+      const b1 = Math.max(b0 + 1, Math.ceil(v.b * (nB - 1)));
+      let bi = b0;
+      for (let b = b0; b <= b1; b++) if (fftData.db[b] > fftData.db[bi]) bi = b;
+      fftStats.textContent = "peak " + fmtHz(bi * fftData.binHz);
     }
   }
 
@@ -1380,6 +1512,20 @@
     return n >= 1000 ? (n / 1000).toFixed(2) + " kN" : n.toFixed(1) + " N";
   }
 
+  function fmtDisp(m) {
+    const um = Math.abs(m) * 1e6;
+    return um >= 1000 ? (um / 1000).toFixed(2) + " mm" : um.toFixed(1) + " µm";
+  }
+
+  // compact signed labels for the displacement y-axis (values are meters)
+  function fmtDispAxis(v) {
+    const um = v * 1e6;
+    const a2 = Math.abs(um);
+    if (a2 >= 1000) return (um / 1000).toFixed(1) + "mm";
+    if (a2 >= 10) return um.toFixed(0);
+    return um.toFixed(1);
+  }
+
   // compact signed labels for the force y-axis
   function fmtForceAxis(v) {
     const a = Math.abs(v);
@@ -1390,15 +1536,22 @@
     return sign + a.toFixed(1);
   }
 
-  forceChan.addEventListener("change", drawForcePlot);
-  attachPlotZoom(forcePlot, "force", drawForcePlot);
+  forceChan.addEventListener("change", () => {
+    plotViews.fft = { a: 0, b: 1 };
+    refreshFFT();
+    drawSignalPlot();
+    drawFFTPlot();
+  });
+  attachPlotZoom(forcePlot, "signal", drawSignalPlot);
+  attachPlotZoom(fftPlot, "fft", drawFFTPlot);
   attachPlotZoom(soundPlot, "sound", () =>
     drawSoundPlot(simPlaySource ? currentSimPlayT() : null)
   );
 
   window.addEventListener("resize", () => {
     if (simRaw && !simResults.hidden) {
-      drawForcePlot();
+      drawSignalPlot();
+      drawFFTPlot();
       drawSoundPlot(simPlaySource ? currentSimPlayT() : null);
     }
   });
@@ -1855,6 +2008,10 @@
     if (analyser) analyser.smoothingTimeConstant = settings.smooth;
     if (mode === "review") {
       drawReviewSpectrum(); // re-run peaks + redraw with new scale/thresholds
+    }
+    if (simRaw && !simResults.hidden) {
+      refreshFFT();
+      drawFFTPlot();
     }
   }
 
