@@ -748,7 +748,6 @@
   ];
 
   const cfcPreset = $("cfcPreset");
-  const cfcSummary = $("cfcSummary");
   const cfcFields = ["Ktc", "Krc", "Kac", "Kte", "Kre", "Kae"];
   const savePresetBtn = $("savePresetBtn");
   const delPresetBtn = $("delPresetBtn");
@@ -815,20 +814,8 @@
   function applyPreset() {
     const p = currentPreset();
     cfcFields.forEach((f) => ($("c" + f).value = p[f]));
-    updateCfcSummary();
     delPresetBtn.hidden = Number(cfcPreset.value) < BUILTIN_CFC.length;
   }
-
-  function updateCfcSummary() {
-    const ktc = Number($("cKtc").value);
-    const krc = Number($("cKrc").value);
-    cfcSummary.textContent =
-      "Ktc " + (Number.isFinite(ktc) ? ktc.toFixed(0) : "–") +
-      " · Krc " + (Number.isFinite(krc) ? krc.toFixed(0) : "–") + " N/mm²";
-  }
-
-  $("cKtc").addEventListener("input", updateCfcSummary);
-  $("cKrc").addEventListener("input", updateCfcSummary);
 
   cfcPreset.addEventListener("change", applyPreset);
 
@@ -1061,27 +1048,6 @@
     return simRaw.res;
   }
 
-  // Per-pixel min/max envelope of a long signal.
-  function envelope(data, w) {
-    const mins = new Float32Array(w);
-    const maxs = new Float32Array(w);
-    const n = data.length;
-    for (let px = 0; px < w; px++) {
-      const a = Math.floor((px * n) / w);
-      const b = Math.max(a + 1, Math.floor(((px + 1) * n) / w));
-      let lo = Infinity;
-      let hi = -Infinity;
-      for (let i = a; i < b && i < n; i++) {
-        const v = data[i];
-        if (v < lo) lo = v;
-        if (v > hi) hi = v;
-      }
-      mins[px] = lo;
-      maxs[px] = hi;
-    }
-    return { mins, maxs };
-  }
-
   function prepPlotCanvas(canvas) {
     const dpr = DPR();
     const cssW = canvas.clientWidth;
@@ -1099,7 +1065,12 @@
     return { ctx, w: cssW, h: cssH };
   }
 
-  function drawWave(canvas, data, color, axes) {
+  // Simple line trace of a long signal. The y-range is computed from the
+  // FULL-resolution data (honest scaling); the drawn polyline is stride-
+  // decimated to ~TRACE_PTS points for responsiveness.
+  const TRACE_PTS = 4000;
+
+  function drawTrace(canvas, data, color, axes) {
     const p = prepPlotCanvas(canvas);
     if (!p) return null;
     const { ctx, w, h } = p;
@@ -1110,12 +1081,13 @@
     const ph = h - T - B;
     if (pw < 20 || ph < 20) return null;
 
-    const { mins, maxs } = envelope(data, pw);
+    // full-resolution range scan
     let lo = Infinity;
     let hi = -Infinity;
-    for (let i = 0; i < pw; i++) {
-      if (mins[i] < lo) lo = mins[i];
-      if (maxs[i] > hi) hi = maxs[i];
+    for (let i = 0; i < data.length; i++) {
+      const v = data[i];
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
     }
     if (!(hi > lo)) hi = lo + 1;
     const span = hi - lo;
@@ -1156,19 +1128,21 @@
     ctx.textAlign = "center";
     ctx.fillText(axes.xLabel, L + pw / 2, T + ph + 4);
 
-    // filled min/max envelope
+    // decimated polyline through real samples
+    const n = data.length;
+    const stride = Math.max(1, Math.floor(n / TRACE_PTS));
     ctx.beginPath();
-    for (let x = 0; x < pw; x++) {
-      const y = yOf(maxs[x]);
-      if (x === 0) ctx.moveTo(L + x, y);
-      else ctx.lineTo(L + x, y);
+    let first = true;
+    for (let i = 0; i < n; i += stride) {
+      const x = L + (i / (n - 1)) * pw;
+      const y = yOf(data[i]);
+      if (first) {
+        ctx.moveTo(x, y);
+        first = false;
+      } else {
+        ctx.lineTo(x, y);
+      }
     }
-    for (let x = pw - 1; x >= 0; x--) {
-      ctx.lineTo(L + x, yOf(mins[x]));
-    }
-    ctx.closePath();
-    ctx.fillStyle = color.fill;
-    ctx.fill();
     ctx.strokeStyle = color.line;
     ctx.lineWidth = 1;
     ctx.stroke();
@@ -1179,9 +1153,8 @@
   function drawForcePlot() {
     if (!simRaw) return;
     const data = forceData();
-    const info = drawWave(forcePlot, data, {
+    const info = drawTrace(forcePlot, data, {
       line: "#7FD8E8",
-      fill: "rgba(127, 216, 232, 0.14)",
     }, {
       yFmt: fmtForceAxis,
       xMax: data.length / simRaw.fs,
@@ -1196,9 +1169,8 @@
   function drawSoundPlot(playT) {
     if (!simAudio) return;
     const dur = simAudio.samples.length / simAudio.rate;
-    const info = drawWave(soundPlot, simAudio.samples, {
+    const info = drawTrace(soundPlot, simAudio.samples, {
       line: "#FFB24D",
-      fill: "rgba(255, 178, 77, 0.14)",
     }, {
       yFmt: (v) => v.toFixed(1),
       xMax: dur,
