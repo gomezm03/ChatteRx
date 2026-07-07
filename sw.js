@@ -2,7 +2,7 @@
    Bump CACHE_VERSION whenever you deploy changed files so clients
    pick up the new build on their next load. */
 
-const CACHE_VERSION = "chatterx-v16";
+const CACHE_VERSION = "chatterx-v17";
 
 const ASSETS = [
   "./",
@@ -35,21 +35,24 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-// Cache-first: instant loads and full offline support after first visit.
+// Network-first for same-origin requests: the app's own files (HTML/JS/CSS)
+// always update together, eliminating stale-cache version mismatches. The
+// cache is refreshed on every successful fetch and used as the offline
+// fallback. Cross-origin requests fall through to the network.
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  const sameOrigin = new URL(event.request.url).origin === location.origin;
+  if (!sameOrigin) return;
+
   event.respondWith(
-    caches.match(event.request).then(
-      (cached) =>
-        cached ||
-        fetch(event.request).then((response) => {
-          // Cache same-origin responses opportunistically.
-          if (response.ok && new URL(event.request.url).origin === location.origin) {
-            const copy = response.clone();
-            caches.open(CACHE_VERSION).then((c) => c.put(event.request, copy));
-          }
-          return response;
-        })
-    )
+    fetch(event.request)
+      .then((response) => {
+        if (response.ok) {
+          const copy = response.clone();
+          caches.open(CACHE_VERSION).then((c) => c.put(event.request, copy));
+        }
+        return response;
+      })
+      .catch(() => caches.match(event.request).then((c) => c || Promise.reject()))
   );
 });
