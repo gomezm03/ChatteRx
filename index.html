@@ -218,7 +218,7 @@
         <label>Simulation time <span class="unit">s</span>
           <input id="sTime" type="number" step="any" min="0.5" inputmode="decimal" value="3"></label>
       </div>
-      <p class="form-note">Internals are fixed at 7,200 steps/rev and 50 axial slices. The second half of the record is treated as steady state for the metric and the audio.</p>
+      <p class="form-note">The second half of the record is treated as steady state for the metric and the audio.</p>
     </div>
   </section>
 
@@ -250,7 +250,7 @@
       </div>
       <div class="sim-plot">
         <div class="sim-plot-head">
-          <span class="plot-title">FORCE — steady state</span>
+          <span class="plot-title">FORCE (N) — steady state</span>
           <select id="forceChan" class="head-select" aria-label="Force channel">
             <option value="fx" selected>Fx</option>
             <option value="fy">Fy</option>
@@ -263,7 +263,7 @@
 
       <div class="sim-plot">
         <div class="sim-plot-head">
-          <span class="plot-title">SOUND — 48 kHz render</span>
+          <span class="plot-title">SOUND — normalized amplitude</span>
           <span class="plot-stat" id="soundStats"></span>
         </div>
         <canvas id="soundPlot" class="sim-canvas"></canvas>

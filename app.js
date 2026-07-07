@@ -718,27 +718,33 @@
   // ============================================================
 
   const CFC_STORE_KEY = "chatterx-cfc-presets";
-  const SIM_STORE_KEY = "chatterx-sim-inputs";
+  const SIM_STORE_KEY = "chatterx-sim-inputs-v2";
 
   // Built-in coefficient sets. Values are N/mm² (cutting) and N/mm (edge).
-  // "Typical" sets are approximate literature-style starting points — edit
-  // to match measured data for real predictions.
+  // These are typical literature-style starting points for sharp carbide
+  // tooling — coefficients depend on the exact tool/material/coating pair,
+  // so replace with measured data (save as a preset) for real predictions.
   const BUILTIN_CFC = [
-    {
-      name: "Measured set (default)",
-      Ktc: 1720.33, Krc: 628.99, Kac: -11.23,
-      Kte: 76.12, Kre: 118.32, Kae: 30.84,
-    },
-    {
-      name: "Aluminum alloy (typical)",
-      Ktc: 750, Krc: 250, Kac: 0,
-      Kte: 0, Kre: 0, Kae: 0,
-    },
-    {
-      name: "Low-carbon steel (typical)",
-      Ktc: 2100, Krc: 700, Kac: 0,
-      Kte: 0, Kre: 0, Kae: 0,
-    },
+    { name: "Aluminum 6061-T6 (typical)",
+      Ktc: 700,  Krc: 210,  Kac: 0, Kte: 0, Kre: 0, Kae: 0 },
+    { name: "Aluminum 7075-T6 (typical)",
+      Ktc: 850,  Krc: 300,  Kac: 0, Kte: 0, Kre: 0, Kae: 0 },
+    { name: "Brass 360 (typical)",
+      Ktc: 550,  Krc: 180,  Kac: 0, Kte: 0, Kre: 0, Kae: 0 },
+    { name: "Gray cast iron (typical)",
+      Ktc: 1350, Krc: 500,  Kac: 0, Kte: 0, Kre: 0, Kae: 0 },
+    { name: "Steel 1018, low-carbon (typical)",
+      Ktc: 2100, Krc: 750,  Kac: 0, Kte: 0, Kre: 0, Kae: 0 },
+    { name: "Steel 1045, medium-carbon (typical)",
+      Ktc: 2400, Krc: 850,  Kac: 0, Kte: 0, Kre: 0, Kae: 0 },
+    { name: "Steel 4140, alloy (typical)",
+      Ktc: 2600, Krc: 950,  Kac: 0, Kte: 0, Kre: 0, Kae: 0 },
+    { name: "Stainless 304 (typical)",
+      Ktc: 2800, Krc: 1050, Kac: 0, Kte: 0, Kre: 0, Kae: 0 },
+    { name: "Titanium Ti-6Al-4V (typical)",
+      Ktc: 1900, Krc: 750,  Kac: 0, Kte: 0, Kre: 0, Kae: 0 },
+    { name: "Inconel 718 (typical)",
+      Ktc: 3400, Krc: 1250, Kac: 0, Kte: 0, Kre: 0, Kae: 0 },
   ];
 
   const cfcPreset = $("cfcPreset");
@@ -809,9 +815,20 @@
   function applyPreset() {
     const p = currentPreset();
     cfcFields.forEach((f) => ($("c" + f).value = p[f]));
-    cfcSummary.textContent = p.name;
+    updateCfcSummary();
     delPresetBtn.hidden = Number(cfcPreset.value) < BUILTIN_CFC.length;
   }
+
+  function updateCfcSummary() {
+    const ktc = Number($("cKtc").value);
+    const krc = Number($("cKrc").value);
+    cfcSummary.textContent =
+      "Ktc " + (Number.isFinite(ktc) ? ktc.toFixed(0) : "–") +
+      " · Krc " + (Number.isFinite(krc) ? krc.toFixed(0) : "–") + " N/mm²";
+  }
+
+  $("cKtc").addEventListener("input", updateCfcSummary);
+  $("cKrc").addEventListener("input", updateCfcSummary);
 
   cfcPreset.addEventListener("change", applyPreset);
 
@@ -1082,44 +1099,72 @@
     return { ctx, w: cssW, h: cssH };
   }
 
-  function drawWave(canvas, data, color) {
+  function drawWave(canvas, data, color, axes) {
     const p = prepPlotCanvas(canvas);
     if (!p) return null;
     const { ctx, w, h } = p;
-    const pad = 4;
 
-    const { mins, maxs } = envelope(data, w);
+    // gutters for axis labels
+    const L = 46, R = 6, T = 8, B = 16;
+    const pw = w - L - R;
+    const ph = h - T - B;
+    if (pw < 20 || ph < 20) return null;
+
+    const { mins, maxs } = envelope(data, pw);
     let lo = Infinity;
     let hi = -Infinity;
-    for (let i = 0; i < w; i++) {
+    for (let i = 0; i < pw; i++) {
       if (mins[i] < lo) lo = mins[i];
       if (maxs[i] > hi) hi = maxs[i];
     }
-    if (!(hi > lo)) {
-      hi = lo + 1;
-    }
+    if (!(hi > lo)) hi = lo + 1;
     const span = hi - lo;
-    const yOf = (v) => pad + (1 - (v - lo) / span) * (h - 2 * pad);
+    const yOf = (v) => T + (1 - (v - lo) / span) * ph;
 
-    // zero line if zero is in range
-    if (lo <= 0 && hi >= 0) {
-      ctx.strokeStyle = "rgba(44, 51, 62, 0.9)";
-      ctx.lineWidth = 1;
+    ctx.font = "9px ui-monospace, Menlo, monospace";
+    ctx.fillStyle = "#8A919C";
+
+    // frame
+    ctx.strokeStyle = "rgba(44, 51, 62, 0.9)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(L, T, pw, ph);
+
+    // zero line if zero is inside the range
+    if (lo < 0 && hi > 0) {
       ctx.beginPath();
-      ctx.moveTo(0, yOf(0));
-      ctx.lineTo(w, yOf(0));
+      ctx.moveTo(L, yOf(0));
+      ctx.lineTo(L + pw, yOf(0));
       ctx.stroke();
     }
 
+    // y tick labels: hi, lo, and 0 when visible
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    ctx.fillText(axes.yFmt(hi), L - 5, T + 4);
+    ctx.fillText(axes.yFmt(lo), L - 5, T + ph - 4);
+    if (lo < 0 && hi > 0) {
+      const y0 = yOf(0);
+      if (y0 > T + 14 && y0 < T + ph - 14) ctx.fillText(axes.yFmt(0), L - 5, y0);
+    }
+
+    // x tick labels + axis caption
+    ctx.textBaseline = "top";
+    ctx.textAlign = "left";
+    ctx.fillText("0", L, T + ph + 4);
+    ctx.textAlign = "right";
+    ctx.fillText(axes.xMax.toFixed(2), L + pw, T + ph + 4);
+    ctx.textAlign = "center";
+    ctx.fillText(axes.xLabel, L + pw / 2, T + ph + 4);
+
     // filled min/max envelope
     ctx.beginPath();
-    for (let x = 0; x < w; x++) {
+    for (let x = 0; x < pw; x++) {
       const y = yOf(maxs[x]);
-      if (x === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
+      if (x === 0) ctx.moveTo(L + x, y);
+      else ctx.lineTo(L + x, y);
     }
-    for (let x = w - 1; x >= 0; x--) {
-      ctx.lineTo(x, yOf(mins[x]));
+    for (let x = pw - 1; x >= 0; x--) {
+      ctx.lineTo(L + x, yOf(mins[x]));
     }
     ctx.closePath();
     ctx.fillStyle = color.fill;
@@ -1128,14 +1173,19 @@
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    return { hi, lo, w, h };
+    return { hi, lo, L, T, pw, ph };
   }
 
   function drawForcePlot() {
     if (!simRaw) return;
-    const info = drawWave(forcePlot, forceData(), {
+    const data = forceData();
+    const info = drawWave(forcePlot, data, {
       line: "#7FD8E8",
       fill: "rgba(127, 216, 232, 0.14)",
+    }, {
+      yFmt: fmtForceAxis,
+      xMax: data.length / simRaw.fs,
+      xLabel: "time (s)",
     });
     if (info) {
       const peak = Math.max(Math.abs(info.hi), Math.abs(info.lo));
@@ -1145,27 +1195,41 @@
 
   function drawSoundPlot(playT) {
     if (!simAudio) return;
+    const dur = simAudio.samples.length / simAudio.rate;
     const info = drawWave(soundPlot, simAudio.samples, {
       line: "#FFB24D",
       fill: "rgba(255, 178, 77, 0.14)",
+    }, {
+      yFmt: (v) => v.toFixed(1),
+      xMax: dur,
+      xLabel: "time (s)",
     });
     if (!info) return;
-    const dur = simAudio.samples.length / simAudio.rate;
     soundStats.textContent = dur.toFixed(2) + " s";
     if (playT != null && dur > 0) {
       const ctx = soundPlot.getContext("2d");
-      const x = clamp(playT / dur, 0, 1) * info.w;
+      const x = info.L + clamp(playT / dur, 0, 1) * info.pw;
       ctx.strokeStyle = "#7FD8E8";
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, info.h);
+      ctx.moveTo(x, info.T);
+      ctx.lineTo(x, info.T + info.ph);
       ctx.stroke();
     }
   }
 
   function fmtForce(n) {
     return n >= 1000 ? (n / 1000).toFixed(2) + " kN" : n.toFixed(1) + " N";
+  }
+
+  // compact signed labels for the force y-axis
+  function fmtForceAxis(v) {
+    const a = Math.abs(v);
+    const sign = v < 0 ? "-" : "";
+    if (a >= 10000) return sign + (a / 1000).toFixed(0) + "k";
+    if (a >= 1000) return sign + (a / 1000).toFixed(1) + "k";
+    if (a >= 10) return sign + a.toFixed(0);
+    return sign + a.toFixed(1);
   }
 
   forceChan.addEventListener("change", drawForcePlot);
