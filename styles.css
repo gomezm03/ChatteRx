@@ -730,6 +730,20 @@ details[open] .chev { transform: rotate(90deg); }
   color: var(--muted);
 }
 
+.plot-mode {
+  padding: 4px 8px;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--marker);
+  background: var(--panel-deep);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
 .plot-stat {
   margin-left: auto;
   font-family: var(--mono);

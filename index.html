@@ -281,6 +281,7 @@
       <div class="sim-plot">
         <div class="sim-plot-head">
           <span class="plot-title" id="fftPlotTitle">FFT (N) — resultant force</span>
+          <button id="fftModeBtn" class="plot-mode" aria-label="Toggle cursor or zoom mode">CURSOR</button>
           <label class="range-ctl">
             <span>range</span>
             <select id="fftRange" aria-label="FFT frequency range">
@@ -349,9 +350,9 @@
       <div class="form-grid">
         <label class="span-2"><span class="lab">FFT scale</span>
           <select id="setSimScale">
-            <option value="lin" selected>Linear amplitude</option>
-            <option value="db">FFT amplitude (dB)</option>
-            <option value="psd">Power spectral density (dB/Hz)</option>
+            <option value="lin" selected>Amplitude — linear</option>
+            <option value="db">Amplitude (dB)</option>
+            <option value="psd">PSD — linear</option>
           </select></label>
         <label class="span-2"><span class="lab">Sound source</span>
           <select id="setSoundSrc">

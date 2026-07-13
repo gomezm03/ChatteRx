@@ -1320,7 +1320,7 @@
     plotViews.fft = { a: 0, b: 1 };
     plotViews.sound = { a: 0, b: 1 };
     fftData = null;
-    fftPicks = []; // new run: old frequencies no longer meaningful
+    fftCursorHz = null; // new run: old frequency no longer meaningful
     simProgress.hidden = false;
     simProgressFill.style.width = "0%";
     runSimBtn.textContent = "RUNNING…";
@@ -1471,8 +1471,9 @@
   const TRACE_PTS = 4000;
   const plotViews = { signal: { a: 0, b: 1 }, fft: { a: 0, b: 1 }, sound: { a: 0, b: 1 } };
   let linkTime = false;
-  let fftData = null;     // { vals: Float32Array, binHz }
-  let fftPicks = [];      // manually picked peak frequencies (Hz)
+  let fftData = null;       // { vals: Float32Array, binHz }
+  let fftCursorHz = null;    // measurement cursor position (Hz)
+  let fftMode = "cursor";    // "cursor" | "zoom" — FFT drag behavior
   let fftRangeMode = "10ft"; // 5ft | 10ft | 20ft | 10k
   const plotInfo = {};
 
@@ -1589,10 +1590,14 @@
     if (linkTime) commitView("signal", plotViews.signal); // sync now
   });
 
-  // drag to zoom, double-tap to reset, optional short-tap action —
-  // shared by the sim plots
-  function attachPlotZoom(canvas, key, redraw, onTap) {
+  // drag to zoom, double-tap to reset — shared by the sim plots.
+  // opts.cursorMode(): when true, a drag SWEEPS the cursor (opts.onCursor)
+  // instead of zooming — the FFT's CURSOR mode. opts.onTap fires on a short
+  // tap (deferred so a double-tap can cancel it) when not in cursor mode.
+  function attachPlotZoom(canvas, key, redraw, opts) {
+    opts = opts || {};
     let drag = null;
+    let cursorDrag = false;
     let lastTap = 0;
     let pendingTap = null;
     canvas.addEventListener("pointerdown", (e) => {
@@ -1600,7 +1605,8 @@
       if (now - lastTap < 300) {
         lastTap = 0;
         drag = null;
-        if (pendingTap) { clearTimeout(pendingTap); pendingTap = null; } // it was a double-tap, not a pick
+        cursorDrag = false;
+        if (pendingTap) { clearTimeout(pendingTap); pendingTap = null; }
         commitView(key, { a: 0, b: 1 });
         return;
       }
@@ -1608,9 +1614,19 @@
       canvas.setPointerCapture(e.pointerId);
       const rect = canvas.getBoundingClientRect();
       const x = clamp(e.clientX - rect.left, 0, rect.width);
+      if (opts.cursorMode && opts.cursorMode()) {
+        cursorDrag = true;
+        opts.onCursor(x); // immediate feedback, then follow the finger
+        return;
+      }
       drag = { x0: x, x1: x, rect };
     });
     canvas.addEventListener("pointermove", (e) => {
+      if (cursorDrag) {
+        const rect = canvas.getBoundingClientRect();
+        opts.onCursor(clamp(e.clientX - rect.left, 0, rect.width));
+        return;
+      }
       if (!drag) return;
       drag.x1 = clamp(e.clientX - drag.rect.left, 0, drag.rect.width);
       redraw();
@@ -1623,6 +1639,7 @@
       ctx.fillRect(a, info.T, b - a, info.ph);
     });
     function end() {
+      if (cursorDrag) { cursorDrag = false; return; }
       if (!drag) return;
       const info = plotInfo[key];
       const d = drag;
@@ -1636,12 +1653,11 @@
           commitView(key, { a: v.a + lo * span, b: v.a + hi * span });
           return;
         }
-      } else if (onTap) {
-        // short tap: defer briefly so a double-tap can cancel it
+      } else if (opts.onTap) {
         const px = d.x1;
         pendingTap = setTimeout(() => {
           pendingTap = null;
-          onTap(px);
+          opts.onTap(px);
         }, 280);
       }
       redraw();
@@ -1722,18 +1738,25 @@
     const bins = Math.max(8, Math.min(NF / 2, Math.ceil(fmax / binHz)));
 
     const sc = settings.simScale;
-    const psdOff = sc === "psd" ? -10 * Math.log10(binHz * 1.5) : 0;
     const vals = new Float32Array(bins);
     for (let b = 0; b < bins; b++) {
-      const meanPow = pow[b] / segs;
-      vals[b] = sc === "lin"
-        ? Math.sqrt(meanPow)
-        : 10 * Math.log10(meanPow + 1e-24) + psdOff;
+      const meanPow = pow[b] / segs; // (single-sided amplitude)²
+      if (sc === "lin") {
+        vals[b] = Math.sqrt(meanPow); // amplitude, N or m
+      } else if (sc === "psd") {
+        // textbook one-sided density 2|X|²/(fs·Σw²): amp²/(2·ENBW·Δf)
+        vals[b] = meanPow / (2 * 1.5 * binHz); // N²/Hz or m²/Hz
+      } else {
+        vals[b] = 10 * Math.log10(meanPow + 1e-24); // dB re 1 N / 1 m-based unit
+      }
     }
     // drop the DC bin (the mean of the signal) so it doesn't crush the scale
-    if (bins > 1) vals[0] = sc === "lin" ? 0 : vals[1];
+    if (bins > 1) vals[0] = sc === "db" ? vals[1] : 0;
 
     fftData = { vals, binHz };
+    if (fftCursorHz != null) {
+      fftCursorHz = Math.min(fftCursorHz, (bins - 1) * binHz);
+    }
   }
 
   function drawFFTPlot() {
@@ -1744,10 +1767,20 @@
     const ch = channelInfo();
     const sc = settings.simScale;
     const isDisp = ch.kind === "disp";
-    const unit = sc === "lin" ? ch.unit : sc === "psd" ? "dB/Hz" : "dB";
-    fftPlotTitle.textContent = "FFT (" + unit + ") — " + ch.label.toLowerCase();
+    const mag = isDisp ? "|x|" : "|F|";
+    if (sc === "lin") {
+      fftPlotTitle.textContent =
+        "FFT — " + mag + " (" + ch.unit + ") — " + ch.label.toLowerCase();
+    } else if (sc === "psd") {
+      fftPlotTitle.textContent =
+        "PSD (" + (isDisp ? "µm²/Hz" : "N²/Hz") + ") — " + ch.label.toLowerCase();
+    } else {
+      fftPlotTitle.textContent =
+        "FFT (dB re 1 " + ch.unit + ") — " + ch.label.toLowerCase();
+    }
     const yFmt =
-      sc !== "lin" ? (val) => val.toFixed(0)
+      sc === "db" ? (val) => val.toFixed(0)
+      : sc === "psd" ? (isDisp ? (v) => fmtDensAxis(v * 1e12) : fmtDensAxis)
       : isDisp ? fmtDispAxis
       : fmtForceAxis;
     const info = drawTrace(fftPlot, "fft", fftData.vals, {
@@ -1790,88 +1823,66 @@
       ctx.restore();
     }
 
-    // manual peak picks: markers + labels, values read from the CURRENT data
-    ctx.font = "9px ui-monospace, Menlo, monospace";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "alphabetic";
-    for (const f of fftPicks) {
-      if (f < fLo || f > fHi) continue;
-      const bin = Math.round(f / fftData.binHz);
-      if (bin < 0 || bin >= fftData.vals.length) continue;
-      const val = fftData.vals[bin];
-      const yRange = info.hi - info.lo;
-      const y = info.T + (1 - (val - info.lo) / yRange) * info.ph;
-      const x = xOfFreq(f);
+    // measurement cursor: vertical line + cap, same idiom as the timeline playhead
+    if (fftCursorHz != null && fftCursorHz >= fLo && fftCursorHz <= fHi) {
+      const x = xOfFreq(fftCursorHz);
+      ctx.strokeStyle = PAL.marker;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x, info.T);
+      ctx.lineTo(x, info.T + info.ph);
+      ctx.stroke();
       ctx.fillStyle = PAL.marker;
       ctx.beginPath();
-      ctx.moveTo(x, y - 4);
-      ctx.lineTo(x - 4, y - 11);
-      ctx.lineTo(x + 4, y - 11);
+      ctx.moveTo(x - 5, info.T);
+      ctx.lineTo(x + 5, info.T);
+      ctx.lineTo(x, info.T + 7);
       ctx.closePath();
       ctx.fill();
-      ctx.fillText(
-        fmtHz(f) + " · " + fftAmpStr(val),
-        clamp(x, info.L + 34, info.L + info.pw - 34),
-        Math.max(y - 15, info.T + 18)
-      );
     }
     updateFftStat();
   }
 
   function fftAmpStr(val) {
     const sc = settings.simScale;
+    const ch = channelInfo();
     if (sc === "lin") {
-      const ch = channelInfo();
       return ch.kind === "disp" ? fmtDisp(val) : fmtForce(val);
     }
-    return val.toFixed(1) + (sc === "psd" ? " dB/Hz" : " dB");
+    if (sc === "psd") {
+      return ch.kind === "disp"
+        ? fmtDens(val * 1e12) + " µm²/Hz"
+        : fmtDens(val) + " N²/Hz";
+    }
+    return val.toFixed(1) + " dB";
   }
 
   function updateFftStat() {
-    if (!fftData || fftPicks.length === 0) {
-      fftStats.textContent = "tap trace to mark peaks";
+    if (!fftData || fftCursorHz == null) {
+      fftStats.textContent =
+        fftMode === "cursor" ? "drag to place cursor" : "tap to place cursor";
       return;
     }
-    const f = fftPicks[fftPicks.length - 1];
-    const bin = Math.round(f / fftData.binHz);
-    const val = fftData.vals[Math.min(bin, fftData.vals.length - 1)];
-    fftStats.textContent = fmtHz(f) + " · " + fftAmpStr(val);
+    const bin = clamp(
+      Math.round(fftCursorHz / fftData.binHz),
+      0,
+      fftData.vals.length - 1
+    );
+    fftStats.textContent =
+      fmtHz(fftCursorHz) + " · " + fftAmpStr(fftData.vals[bin]);
   }
 
-  // tap on the FFT trace: snap to the local maximum near the finger;
-  // tapping an existing pick removes it. Up to 5 picks.
-  function fftTap(px) {
+  // place/move the measurement cursor from a canvas x-position
+  function fftCursorTo(px) {
     if (!fftData) return;
     const info = plotInfo.fft;
-    if (!info || px < info.L || px > info.L + info.pw) return;
+    if (!info) return;
     const v = plotViews.fft;
     const fSpan = fftData.vals.length * fftData.binHz;
     const fLo = v.a * fSpan;
     const fHi = v.b * fSpan;
-    const fAt = fLo + ((px - info.L) / info.pw) * (fHi - fLo);
-    const hzPerPx = (fHi - fLo) / info.pw;
-
-    // remove if tapping near an existing pick (within 12 px)
-    const nearIdx = fftPicks.findIndex((f) => Math.abs(f - fAt) < 12 * hzPerPx);
-    if (nearIdx >= 0) {
-      fftPicks.splice(nearIdx, 1);
-      drawFFTPlot();
-      return;
-    }
-
-    // snap: local max within ±10 px worth of bins
-    const binAt = Math.round(fAt / fftData.binHz);
-    const winBins = Math.max(2, Math.ceil((10 * hzPerPx) / fftData.binHz));
-    let best = clamp(binAt, 1, fftData.vals.length - 1);
-    for (
-      let b = Math.max(1, binAt - winBins);
-      b <= Math.min(fftData.vals.length - 1, binAt + winBins);
-      b++
-    ) {
-      if (fftData.vals[b] > fftData.vals[best]) best = b;
-    }
-    fftPicks.push(best * fftData.binHz);
-    if (fftPicks.length > 5) fftPicks.shift();
+    const x = clamp(px, info.L, info.L + info.pw);
+    fftCursorHz = fLo + ((x - info.L) / info.pw) * (fHi - fLo);
     drawFFTPlot();
   }
 
@@ -1903,6 +1914,22 @@
 
   function fmtForce(n) {
     return n >= 1000 ? (n / 1000).toFixed(2) + " kN" : n.toFixed(1) + " N";
+  }
+
+  // compact plain-number density labels (no scientific notation on the axis;
+  // exponent form only as an extreme-value fallback)
+  function fmtDens(v) {
+    const a2 = Math.abs(v);
+    if (a2 >= 1e6) return (v / 1e6).toPrecision(3) + "M";
+    if (a2 >= 1e3) return (v / 1e3).toPrecision(3) + "k";
+    if (a2 >= 1) return v.toPrecision(3);
+    if (a2 >= 0.001) return v.toFixed(3);
+    if (a2 === 0) return "0";
+    return v.toExponential(1);
+  }
+
+  function fmtDensAxis(v) {
+    return fmtDens(v);
   }
 
   function fmtDisp(m) {
@@ -1943,7 +1970,17 @@
     drawFFTPlot();
   });
   attachPlotZoom(forcePlot, "signal", drawSignalPlot);
-  attachPlotZoom(fftPlot, "fft", drawFFTPlot, fftTap);
+  attachPlotZoom(fftPlot, "fft", drawFFTPlot, {
+    cursorMode: () => fftMode === "cursor",
+    onCursor: fftCursorTo,
+    onTap: fftCursorTo, // in ZOOM mode a short tap still places the cursor
+  });
+
+  $("fftModeBtn").addEventListener("click", () => {
+    fftMode = fftMode === "cursor" ? "zoom" : "cursor";
+    $("fftModeBtn").textContent = fftMode.toUpperCase();
+    updateFftStat();
+  });
   attachPlotZoom(soundPlot, "sound", () =>
     drawSoundPlot(simPlaySource ? currentSimPlayT() : null)
   );
