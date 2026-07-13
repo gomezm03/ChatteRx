@@ -1320,6 +1320,7 @@
     plotViews.fft = { a: 0, b: 1 };
     plotViews.sound = { a: 0, b: 1 };
     fftData = null;
+    fftPicks = []; // new run: old frequencies no longer meaningful
     simProgress.hidden = false;
     simProgressFill.style.width = "0%";
     runSimBtn.textContent = "RUNNING…";
@@ -1470,7 +1471,9 @@
   const TRACE_PTS = 4000;
   const plotViews = { signal: { a: 0, b: 1 }, fft: { a: 0, b: 1 }, sound: { a: 0, b: 1 } };
   let linkTime = false;
-  let fftData = null; // { db: Float32Array, binHz }
+  let fftData = null;     // { vals: Float32Array, binHz }
+  let fftPicks = [];      // manually picked peak frequencies (Hz)
+  let fftRangeMode = "10ft"; // 5ft | 10ft | 20ft | 10k
   const plotInfo = {};
 
   function drawTrace(canvas, key, data, color, axes) {
@@ -1586,15 +1589,18 @@
     if (linkTime) commitView("signal", plotViews.signal); // sync now
   });
 
-  // drag to zoom, double-tap to reset — shared by the sim plots
-  function attachPlotZoom(canvas, key, redraw) {
+  // drag to zoom, double-tap to reset, optional short-tap action —
+  // shared by the sim plots
+  function attachPlotZoom(canvas, key, redraw, onTap) {
     let drag = null;
     let lastTap = 0;
+    let pendingTap = null;
     canvas.addEventListener("pointerdown", (e) => {
       const now = performance.now();
       if (now - lastTap < 300) {
         lastTap = 0;
         drag = null;
+        if (pendingTap) { clearTimeout(pendingTap); pendingTap = null; } // it was a double-tap, not a pick
         commitView(key, { a: 0, b: 1 });
         return;
       }
@@ -1630,6 +1636,13 @@
           commitView(key, { a: v.a + lo * span, b: v.a + hi * span });
           return;
         }
+      } else if (onTap) {
+        // short tap: defer briefly so a double-tap can cancel it
+        const px = d.x1;
+        pendingTap = setTimeout(() => {
+          pendingTap = null;
+          onTap(px);
+        }, 280);
       }
       redraw();
     }
@@ -1698,9 +1711,14 @@
     }
 
     const binHz = simRaw.fs / NF;
-    // default frequency span: 10× tooth passing frequency (Tony's plots)
     const ftooth = simRunMeta ? (simRunMeta.Nt * simRunMeta.omega) / 60 : 0;
-    const fmax = Math.min(simRaw.fs / 2, ftooth > 0 ? 10 * ftooth : 5000);
+    let fmax;
+    if (fftRangeMode === "10k") fmax = 10000;
+    else {
+      const mult = fftRangeMode === "5ft" ? 5 : fftRangeMode === "20ft" ? 20 : 10;
+      fmax = ftooth > 0 ? mult * ftooth : 5000;
+    }
+    fmax = Math.min(simRaw.fs / 2, fmax);
     const bins = Math.max(8, Math.min(NF / 2, Math.ceil(fmax / binHz)));
 
     const sc = settings.simScale;
@@ -1740,15 +1758,121 @@
       xLabel: "frequency (Hz)",
       xFmt: (f) => (f >= 1000 ? (f / 1000).toFixed(2) + "k" : Math.round(f).toString()),
     });
-    if (info) {
-      const v = plotViews.fft;
-      const nB = fftData.vals.length;
-      const b0 = Math.max(1, Math.floor(v.a * (nB - 1)));
-      const b1 = Math.max(b0 + 1, Math.ceil(v.b * (nB - 1)));
-      let bi = b0;
-      for (let b = b0; b <= b1; b++) if (fftData.vals[b] > fftData.vals[bi]) bi = b;
-      fftStats.textContent = "peak " + fmtHz(bi * fftData.binHz);
+    if (!info) return;
+
+    const ctx = fftPlot.getContext("2d");
+    const v = plotViews.fft;
+    const fSpan = fftData.vals.length * fftData.binHz;
+    const fLo = v.a * fSpan;
+    const fHi = v.b * fSpan;
+    const xOfFreq = (f) => info.L + ((f - fLo) / (fHi - fLo)) * info.pw;
+
+    // tooth-passing frequency and its harmonics: faint dotted verticals
+    const ftooth = simRunMeta ? (simRunMeta.Nt * simRunMeta.omega) / 60 : 0;
+    if (ftooth > 0) {
+      const kMax = Math.floor(fHi / ftooth);
+      const labelEvery = kMax > 14 ? Math.ceil(kMax / 10) : 1;
+      ctx.save();
+      ctx.setLineDash([2, 4]);
+      ctx.strokeStyle = `rgba(${PAL.markerRGB}, 0.30)`;
+      ctx.fillStyle = PAL.label;
+      ctx.font = "8px ui-monospace, Menlo, monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      for (let k = Math.max(1, Math.ceil(fLo / ftooth)); k <= kMax; k++) {
+        const x = xOfFreq(k * ftooth);
+        ctx.beginPath();
+        ctx.moveTo(x, info.T);
+        ctx.lineTo(x, info.T + info.ph);
+        ctx.stroke();
+        if (k % labelEvery === 0) ctx.fillText(k + "×", x, info.T + 2);
+      }
+      ctx.restore();
     }
+
+    // manual peak picks: markers + labels, values read from the CURRENT data
+    ctx.font = "9px ui-monospace, Menlo, monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    for (const f of fftPicks) {
+      if (f < fLo || f > fHi) continue;
+      const bin = Math.round(f / fftData.binHz);
+      if (bin < 0 || bin >= fftData.vals.length) continue;
+      const val = fftData.vals[bin];
+      const yRange = info.hi - info.lo;
+      const y = info.T + (1 - (val - info.lo) / yRange) * info.ph;
+      const x = xOfFreq(f);
+      ctx.fillStyle = PAL.marker;
+      ctx.beginPath();
+      ctx.moveTo(x, y - 4);
+      ctx.lineTo(x - 4, y - 11);
+      ctx.lineTo(x + 4, y - 11);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillText(
+        fmtHz(f) + " · " + fftAmpStr(val),
+        clamp(x, info.L + 34, info.L + info.pw - 34),
+        Math.max(y - 15, info.T + 18)
+      );
+    }
+    updateFftStat();
+  }
+
+  function fftAmpStr(val) {
+    const sc = settings.simScale;
+    if (sc === "lin") {
+      const ch = channelInfo();
+      return ch.kind === "disp" ? fmtDisp(val) : fmtForce(val);
+    }
+    return val.toFixed(1) + (sc === "psd" ? " dB/Hz" : " dB");
+  }
+
+  function updateFftStat() {
+    if (!fftData || fftPicks.length === 0) {
+      fftStats.textContent = "tap trace to mark peaks";
+      return;
+    }
+    const f = fftPicks[fftPicks.length - 1];
+    const bin = Math.round(f / fftData.binHz);
+    const val = fftData.vals[Math.min(bin, fftData.vals.length - 1)];
+    fftStats.textContent = fmtHz(f) + " · " + fftAmpStr(val);
+  }
+
+  // tap on the FFT trace: snap to the local maximum near the finger;
+  // tapping an existing pick removes it. Up to 5 picks.
+  function fftTap(px) {
+    if (!fftData) return;
+    const info = plotInfo.fft;
+    if (!info || px < info.L || px > info.L + info.pw) return;
+    const v = plotViews.fft;
+    const fSpan = fftData.vals.length * fftData.binHz;
+    const fLo = v.a * fSpan;
+    const fHi = v.b * fSpan;
+    const fAt = fLo + ((px - info.L) / info.pw) * (fHi - fLo);
+    const hzPerPx = (fHi - fLo) / info.pw;
+
+    // remove if tapping near an existing pick (within 12 px)
+    const nearIdx = fftPicks.findIndex((f) => Math.abs(f - fAt) < 12 * hzPerPx);
+    if (nearIdx >= 0) {
+      fftPicks.splice(nearIdx, 1);
+      drawFFTPlot();
+      return;
+    }
+
+    // snap: local max within ±10 px worth of bins
+    const binAt = Math.round(fAt / fftData.binHz);
+    const winBins = Math.max(2, Math.ceil((10 * hzPerPx) / fftData.binHz));
+    let best = clamp(binAt, 1, fftData.vals.length - 1);
+    for (
+      let b = Math.max(1, binAt - winBins);
+      b <= Math.min(fftData.vals.length - 1, binAt + winBins);
+      b++
+    ) {
+      if (fftData.vals[b] > fftData.vals[best]) best = b;
+    }
+    fftPicks.push(best * fftData.binHz);
+    if (fftPicks.length > 5) fftPicks.shift();
+    drawFFTPlot();
   }
 
   function drawSoundPlot(playT) {
@@ -1807,12 +1931,19 @@
 
   forceChan.addEventListener("change", () => {
     plotViews.fft = { a: 0, b: 1 };
-    refreshFFT();
+    refreshFFT(); // picks persist; their values re-read from the new data
     drawSignalPlot();
     drawFFTPlot();
   });
+
+  $("fftRange").addEventListener("change", () => {
+    fftRangeMode = $("fftRange").value;
+    plotViews.fft = { a: 0, b: 1 };
+    refreshFFT();
+    drawFFTPlot();
+  });
   attachPlotZoom(forcePlot, "signal", drawSignalPlot);
-  attachPlotZoom(fftPlot, "fft", drawFFTPlot);
+  attachPlotZoom(fftPlot, "fft", drawFFTPlot, fftTap);
   attachPlotZoom(soundPlot, "sound", () =>
     drawSoundPlot(simPlaySource ? currentSimPlayT() : null)
   );

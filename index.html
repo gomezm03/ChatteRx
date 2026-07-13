@@ -281,6 +281,15 @@
       <div class="sim-plot">
         <div class="sim-plot-head">
           <span class="plot-title" id="fftPlotTitle">FFT (N) — resultant force</span>
+          <label class="range-ctl">
+            <span>range</span>
+            <select id="fftRange" aria-label="FFT frequency range">
+              <option value="5ft">0–5×fₜ</option>
+              <option value="10ft" selected>0–10×fₜ</option>
+              <option value="20ft">0–20×fₜ</option>
+              <option value="10k">0–10 kHz</option>
+            </select>
+          </label>
           <span class="plot-stat" id="fftStats"></span>
         </div>
         <div class="plot-body"><canvas id="fftPlot" class="sim-canvas"></canvas></div>
