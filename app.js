@@ -27,6 +27,7 @@
     minSep: 60,       // Hz between reported peaks
     scanMin: 100,     // Hz, periodic-sampling scan band (stability engine)
     scanMax: 10000,
+    theme: "amber",   // amber | msc | mojave
     simScale: "lin",  // sim FFT: "lin" | "db" | "psd"
     soundSrc: "xt",   // sim sound: xt | yt | dres | fx | fy | fres
     showComp: "off",  // add Fx/Fy/x/y to the sim channel dropdown
@@ -43,6 +44,71 @@
   const SIM_AXIAL = 50;
 
   // ---------- state ----------
+  // ---------- theme palettes (canvas side; CSS vars handle the chrome) ----------
+  function ramp(stops) {
+    const s = stops.map((h) => [
+      parseInt(h.slice(1, 3), 16),
+      parseInt(h.slice(3, 5), 16),
+      parseInt(h.slice(5, 7), 16),
+    ]);
+    return (t) => {
+      t = Math.min(Math.max(t, 0), 1);
+      const x = t * (s.length - 1);
+      const i = Math.min(s.length - 2, Math.floor(x));
+      const f = x - i;
+      const p = s[i];
+      const q = s[i + 1];
+      return [p[0] + (q[0] - p[0]) * f, p[1] + (q[1] - p[1]) * f, p[2] + (q[2] - p[2]) * f];
+    };
+  }
+
+  const PALETTES = {
+    amber: {
+      trace: "#FFB24D", traceRGB: "255, 178, 77",
+      marker: "#7FD8E8", markerRGB: "127, 216, 232",
+      grid: "rgba(44, 51, 62, 0.85)", label: "#8A919C",
+      themeColor: "#14171C",
+      heat: (t) => { // original piecewise ember ramp — byte-identical to pre-theme app
+        if (t < 0.35) { const k = t / 0.35; return [16 + 30 * k, 20 + 14 * k, 26 + 6 * k]; }
+        if (t < 0.7) { const k = (t - 0.35) / 0.35; return [46 + 180 * k, 34 + 110 * k, 32 + 15 * k]; }
+        const k = (t - 0.7) / 0.3; return [226 + 29 * k, 144 + 90 * k, 47 + 160 * k];
+      },
+    },
+    msc: {
+      trace: "#00A3E0", traceRGB: "0, 163, 224",     // Bright Blue leads the traces
+      marker: "#FFFFFF", markerRGB: "255, 255, 255", // white markers on the blue field
+      grid: "rgba(26, 44, 82, 0.9)", label: "#93A3C4",
+      themeColor: "#030B1A",
+      heat: ramp(["#000000", "#012169", "#0057B8", "#00A3E0", "#FFFFFF"]),
+    },
+    mojave: {
+      trace: "#33FF66", traceRGB: "51, 255, 102",    // single green phosphor
+      marker: "#B5FFC9", markerRGB: "181, 255, 201",
+      grid: "rgba(14, 42, 24, 0.95)", label: "#4E8F66",
+      themeColor: "#020D06",
+      heat: ramp(["#000000", "#02220F", "#0A7A33", "#33FF66", "#EAFFF2"]),
+    },
+  };
+  let PAL = PALETTES.amber;
+
+  function applyTheme(name) {
+    if (!PALETTES[name]) name = "amber";
+    PAL = PALETTES[name];
+    if (name === "amber") delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = name;
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute("content", PAL.themeColor);
+    // repaint everything currently on screen in the new palette
+    if (gram && gramImage) renderGramImage(); // rebuild spectrogram colormap
+    if (mode === "review") { drawTimeline(); drawReviewSpectrum(); }
+    else if (mode === "idle") drawGrid(specCtx, specCanvas.clientWidth, specCanvas.clientHeight);
+    if (simRaw && !simResults.hidden) {
+      drawSignalPlot(); drawFFTPlot();
+      drawSoundPlot(simPlaySource ? currentSimPlayT() : null);
+    }
+    if (typeof drawFRF === "function") drawFRF();
+  }
+
   let mode = "idle";              // idle | live | review
   let audioCtx = null;
   let analyser = null;
@@ -166,6 +232,8 @@
         fitCanvas(gramCanvas, gramCtx, false);
         redrawStatic();
       });
+    } else if (name === "sim") {
+      requestAnimationFrame(drawFRF);
     }
   }
 
@@ -477,7 +545,7 @@
     for (let c = 0; c < cols; c++) {
       for (let b = 0; b < bins; b++) {
         const y = bins - 1 - b;
-        const [r, g, bl] = heat(data[c * bins + b] / 255);
+        const [r, g, bl] = PAL.heat(data[c * bins + b] / 255);
         const o = (y * cols + c) * 4;
         px[o] = r; px[o + 1] = g; px[o + 2] = bl; px[o + 3] = 255;
       }
@@ -514,9 +582,9 @@
       const sx0 = Math.max(0, fracToX(selection.a));
       const sx1 = Math.min(w, fracToX(selection.b));
       if (sx1 > sx0) {
-        ctx.fillStyle = "rgba(127, 216, 232, 0.13)";
+        ctx.fillStyle = `rgba(${PAL.markerRGB}, 0.13)`;
         ctx.fillRect(sx0, 0, sx1 - sx0, h);
-        ctx.strokeStyle = "rgba(127, 216, 232, 0.6)";
+        ctx.strokeStyle = `rgba(${PAL.markerRGB}, 0.6)`;
         ctx.lineWidth = 1;
         ctx.strokeRect(sx0 + 0.5, 0.5, sx1 - sx0 - 1, h - 1);
       }
@@ -526,7 +594,7 @@
     if (dragSel) {
       const dx0 = Math.min(dragSel.x0, dragSel.x1);
       const dx1 = Math.max(dragSel.x0, dragSel.x1);
-      ctx.fillStyle = "rgba(127, 216, 232, 0.2)";
+      ctx.fillStyle = `rgba(${PAL.markerRGB}, 0.2)`;
       ctx.fillRect(dx0, 0, dx1 - dx0, h);
     }
 
@@ -534,13 +602,13 @@
     const pf = playhead / duration();
     if (pf >= gramView.a && pf <= gramView.b) {
       const x = fracToX(pf);
-      ctx.strokeStyle = "#7FD8E8";
+      ctx.strokeStyle = PAL.marker;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.moveTo(x, 0);
       ctx.lineTo(x, h);
       ctx.stroke();
-      ctx.fillStyle = "#7FD8E8";
+      ctx.fillStyle = PAL.marker;
       ctx.beginPath();
       ctx.moveTo(x - 5, 0);
       ctx.lineTo(x + 5, 0);
@@ -1018,6 +1086,154 @@
     setModes(modeRowsY, readModes(modeRowsX))
   );
 
+  // ---------- tool-point FRF (live from the mode tables) ----------
+  // Receptance per direction, modes in parallel:
+  //   H(w) = SUM_i 1 / (k_i - m_i w^2 + j c_i w),  m = k/wn^2, c = 2 zeta sqrt(mk)
+  // Displayed as Re{H} and Im{H} in um/N.
+  const FRF_POINTS = 400;
+
+  function frfCurves(modes, fmaxHz) {
+    const n = FRF_POINTS;
+    const re = new Float32Array(n);
+    const im = new Float32Array(n);
+    const ms = modes.map((md) => {
+      const wn = md.fn * 2 * Math.PI;
+      const k = md.k * 1e6; // N/um -> N/m
+      const m = k / (wn * wn);
+      const c = 2 * md.zeta * Math.sqrt(m * k);
+      return { k, m, c };
+    });
+    for (let i = 0; i < n; i++) {
+      const w = ((i / (n - 1)) * fmaxHz) * 2 * Math.PI;
+      let sr = 0;
+      let si = 0;
+      for (const md of ms) {
+        const a2 = md.k - md.m * w * w;
+        const b2 = md.c * w;
+        const den = a2 * a2 + b2 * b2;
+        sr += a2 / den;
+        si += -b2 / den;
+      }
+      re[i] = sr * 1e6; // m/N -> um/N
+      im[i] = si * 1e6;
+    }
+    return { re, im };
+  }
+
+  function drawFRFPart(canvas, cx, cy, fmaxHz, yLabelUnit) {
+    const p = prepPlotCanvas(canvas);
+    if (!p) return;
+    const { ctx, w, h } = p;
+    const L = 52, R = 6, T = 8, B = 16;
+    const pw = w - L - R;
+    const ph = h - T - B;
+    if (pw < 20 || ph < 20) return;
+
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const arr of [cx, cy]) {
+      if (!arr) continue;
+      for (let i = 0; i < arr.length; i++) {
+        if (arr[i] < lo) lo = arr[i];
+        if (arr[i] > hi) hi = arr[i];
+      }
+    }
+    if (!(hi > lo)) { lo = -1; hi = 1; }
+    const pad = (hi - lo) * 0.06 || 0.1;
+    lo -= pad; hi += pad;
+    const span = hi - lo;
+    const yOf = (v) => T + (1 - (v - lo) / span) * ph;
+
+    ctx.font = "9px ui-monospace, Menlo, monospace";
+    ctx.fillStyle = PAL.label;
+    ctx.strokeStyle = PAL.grid;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(L, T, pw, ph);
+    if (lo < 0 && hi > 0) {
+      ctx.beginPath();
+      ctx.moveTo(L, yOf(0));
+      ctx.lineTo(L + pw, yOf(0));
+      ctx.stroke();
+    }
+
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    ctx.fillText(hi.toPrecision(2), L - 5, T + 4);
+    ctx.fillText(lo.toPrecision(2), L - 5, T + ph - 4);
+    if (lo < 0 && hi > 0) {
+      const y0 = yOf(0);
+      if (y0 > T + 14 && y0 < T + ph - 14) ctx.fillText("0", L - 5, y0);
+    }
+    ctx.textBaseline = "top";
+    ctx.textAlign = "left";
+    ctx.fillText("0", L, T + ph + 4);
+    ctx.textAlign = "right";
+    ctx.fillText(
+      fmaxHz >= 1000 ? (fmaxHz / 1000).toFixed(2) + "k" : Math.round(fmaxHz).toString(),
+      L + pw, T + ph + 4
+    );
+    ctx.textAlign = "center";
+    ctx.fillText(yLabelUnit + " — frequency (Hz)", L + pw / 2, T + ph + 4);
+
+    const drawCurve = (arr, color) => {
+      if (!arr) return;
+      ctx.beginPath();
+      for (let i = 0; i < arr.length; i++) {
+        const x = L + (i / (arr.length - 1)) * pw;
+        const y = yOf(arr[i]);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+    };
+    drawCurve(cx, PAL.trace);
+    drawCurve(cy, PAL.marker);
+
+    // legend, top right
+    ctx.textAlign = "right";
+    ctx.textBaseline = "top";
+    if (cx) { ctx.fillStyle = PAL.trace; ctx.fillText("X", L + pw - 22, T + 4); }
+    if (cy) { ctx.fillStyle = PAL.marker; ctx.fillText("Y", L + pw - 6, T + 4); }
+  }
+
+  function drawFRF() {
+    const frfRe = $("frfRe");
+    if (!frfRe) return;
+    const mx = readModes(modeRowsX);
+    const my = readModes(modeRowsY);
+    const note = $("frfNote");
+    const hasAny = mx.length > 0 || my.length > 0;
+    note.hidden = hasAny;
+    if (!hasAny) {
+      [frfRe, $("frfIm")].forEach((cv) => {
+        const p = prepPlotCanvas(cv);
+        if (p) p.ctx.clearRect(0, 0, p.w, p.h);
+      });
+      return;
+    }
+    const maxFn = Math.max(
+      0,
+      ...mx.map((m) => m.fn),
+      ...my.map((m) => m.fn)
+    );
+    const fmax = Math.max(500, 1.5 * maxFn);
+    const X = mx.length ? frfCurves(mx, fmax) : null;
+    const Y = my.length ? frfCurves(my, fmax) : null;
+    drawFRFPart(frfRe, X && X.re, Y && Y.re, fmax, "Re{H} (µm/N)");
+    drawFRFPart($("frfIm"), X && X.im, Y && Y.im, fmax, "Im{H} (µm/N)");
+  }
+
+  // live redraw: typing, add/delete rows, copy X->Y
+  [modeRowsX, modeRowsY].forEach((el) => {
+    el.addEventListener("input", drawFRF);
+    new MutationObserver(drawFRF).observe(el, { childList: true });
+  });
+  $("frfDetails").addEventListener("toggle", () => {
+    if ($("frfDetails").open) requestAnimationFrame(drawFRF);
+  });
+
   // ---------- persistence of sim inputs ----------
   const SIM_FIELDS = ["sOmega", "sB", "sNt", "sD", "sBeta", "sFt", "sRd", "sUd", "sTime"];
 
@@ -1285,10 +1501,10 @@
     const yOf = (v) => T + (1 - (v - lo) / span) * ph;
 
     ctx.font = "9px ui-monospace, Menlo, monospace";
-    ctx.fillStyle = "#8A919C";
+    ctx.fillStyle = PAL.label;
 
     // frame
-    ctx.strokeStyle = "rgba(44, 51, 62, 0.9)";
+    ctx.strokeStyle = PAL.grid;
     ctx.lineWidth = 1;
     ctx.strokeRect(L, T, pw, ph);
 
@@ -1397,7 +1613,7 @@
       const ctx = canvas.getContext("2d");
       const a = clamp(Math.min(drag.x0, drag.x1), info.L, info.L + info.pw);
       const b = clamp(Math.max(drag.x0, drag.x1), info.L, info.L + info.pw);
-      ctx.fillStyle = "rgba(127, 216, 232, 0.18)";
+      ctx.fillStyle = `rgba(${PAL.markerRGB}, 0.18)`;
       ctx.fillRect(a, info.T, b - a, info.ph);
     });
     function end() {
@@ -1428,7 +1644,7 @@
       ch.label.toUpperCase() + " (" + ch.unit + ") — steady state";
     const isDisp = ch.kind === "disp";
     const info = drawTrace(forcePlot, "signal", ch.data, {
-      line: "#7FD8E8",
+      line: PAL.marker,
     }, {
       yFmt: isDisp ? fmtDispAxis : fmtForceAxis,
       xMax: ch.data.length / simRaw.fs,
@@ -1517,7 +1733,7 @@
       : isDisp ? fmtDispAxis
       : fmtForceAxis;
     const info = drawTrace(fftPlot, "fft", fftData.vals, {
-      line: "#FFB24D",
+      line: PAL.trace,
     }, {
       yFmt,
       xMax: fftData.vals.length * fftData.binHz,
@@ -1539,7 +1755,7 @@
     if (!simAudio || !simAudio.samples) return;
     const dur = simAudio.samples.length / simAudio.rate;
     const info = drawTrace(soundPlot, "sound", simAudio.samples, {
-      line: "#FFB24D",
+      line: PAL.trace,
     }, {
       yFmt: (v) => v.toFixed(1),
       xMax: dur,
@@ -1552,7 +1768,7 @@
     if (playT != null && dur > 0 && pf >= v.a && pf <= v.b) {
       const ctx = soundPlot.getContext("2d");
       const x = info.L + ((pf - v.a) / (v.b - v.a)) * info.pw;
-      ctx.strokeStyle = "#7FD8E8";
+      ctx.strokeStyle = PAL.marker;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.moveTo(x, info.T);
@@ -1607,6 +1823,7 @@
       drawFFTPlot();
       drawSoundPlot(simPlaySource ? currentSimPlayT() : null);
     }
+    drawFRF();
   });
 
   function resetSimUi() {
@@ -1751,14 +1968,14 @@
       if (i === startBin) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     }
-    ctx.strokeStyle = "#FFB24D";
+    ctx.strokeStyle = PAL.trace;
     ctx.lineWidth = 1.6;
     ctx.stroke();
 
     ctx.lineTo(w, h);
     ctx.lineTo(0, h);
     ctx.closePath();
-    ctx.fillStyle = "rgba(255, 178, 77, 0.10)";
+    ctx.fillStyle = `rgba(${PAL.traceRGB}, 0.10)`;
     ctx.fill();
 
     ctx.font = "10px ui-monospace, Menlo, monospace";
@@ -1767,7 +1984,7 @@
     peaks.forEach((p, idx) => {
       const x = (p.freq / topHz) * w;
       const y = dbToY(p.db + off, h);
-      ctx.fillStyle = idx === 0 ? "#7FD8E8" : "rgba(127, 216, 232, 0.55)";
+      ctx.fillStyle = idx === 0 ? PAL.marker : `rgba(${PAL.markerRGB}, 0.55)`;
       ctx.beginPath();
       ctx.moveTo(x, y - 4);
       ctx.lineTo(x - 4, y - 11);
@@ -1782,8 +1999,8 @@
 
   function drawGrid(ctx, w, h) {
     if (w === 0 || h === 0) return;
-    ctx.strokeStyle = "rgba(44, 51, 62, 0.8)";
-    ctx.fillStyle = "#8A919C";
+    ctx.strokeStyle = PAL.grid;
+    ctx.fillStyle = PAL.label;
     ctx.lineWidth = 1;
     ctx.font = "9px ui-monospace, Menlo, monospace";
     ctx.textAlign = "left";
@@ -1825,7 +2042,7 @@
       const bin = Math.min(Math.round(frac * maxBin), maxBin);
       const db = mags[Math.max(bin, 1)];
       const t = clamp((db - MIN_DB) / (MAX_DB - MIN_DB), 0, 1);
-      const [r, g, b] = heat(t);
+      const [r, g, b] = PAL.heat(t);
       ctx.fillStyle = `rgb(${r},${g},${b})`;
       ctx.fillRect(pw - col, y, col, 1);
     }
@@ -2050,6 +2267,7 @@
     { id: "setMinSep", key: "minSep", parse: (v) => Math.max(0, Number(v) || 0) },
     { id: "setScanMin", key: "scanMin", parse: (v) => Math.max(10, Number(v) || 10) },
     { id: "setScanMax", key: "scanMax", parse: (v) => Math.max(100, Number(v) || 100) },
+    { id: "setTheme", key: "theme", parse: (v) => v },
     { id: "setSimScale", key: "simScale", parse: (v) => v },
     { id: "setSoundSrc", key: "soundSrc", parse: (v) => v },
     { id: "setShowComp", key: "showComp", parse: (v) => v },
@@ -2059,8 +2277,14 @@
     SETTING_FIELDS.forEach((f) => ($(f.id).value = settings[f.key]));
   }
 
+  let appliedTheme = "amber";
+
   function applySettings() {
     saveJson(SETTINGS_KEY, settings);
+    if (settings.theme !== appliedTheme) {
+      appliedTheme = settings.theme;
+      applyTheme(settings.theme);
+    }
     if (analyser) analyser.smoothingTimeConstant = settings.smooth;
     if (mode === "review") {
       drawReviewSpectrum(); // re-run peaks + redraw with new scale/thresholds
@@ -2095,6 +2319,8 @@
   settingsToUi();
   buildChanOptions();
   restoreSimInputs();
+  appliedTheme = settings.theme;
+  applyTheme(settings.theme);
   requestAnimationFrame(() => {
     fitCanvas(specCanvas, specCtx, false);
     fitCanvas(gramCanvas, gramCtx, false);

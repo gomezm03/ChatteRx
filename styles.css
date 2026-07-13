@@ -6,6 +6,8 @@
 
 :root {
   --bg: #14171C;
+  --trace-rgb: 255, 178, 77;
+  --marker-rgb: 127, 216, 232;
   --panel: #1D222A;
   --panel-deep: #10141A;
   --line: #2C333E;
@@ -191,7 +193,7 @@ body {
   line-height: 1;
   color: var(--trace);
   font-variant-numeric: tabular-nums;
-  text-shadow: 0 0 18px rgba(255, 178, 77, 0.25);
+  text-shadow: 0 0 18px rgba(var(--trace-rgb), 0.25);
 }
 
 .readout-unit {
@@ -417,7 +419,7 @@ body {
   margin-right: 5px;
 }
 
-.chip-top { border-color: rgba(255, 178, 77, 0.55); }
+.chip-top { border-color: rgba(var(--trace-rgb), 0.55); }
 
 .chip-empty {
   font-family: var(--sans);
@@ -471,7 +473,7 @@ body {
   user-select: none;
 }
 
-.btn-load:active { background: rgba(127, 216, 232, 0.08); }
+.btn-load:active { background: rgba(var(--marker-rgb), 0.08); }
 
 button:focus-visible,
 select:focus-visible,
@@ -849,4 +851,63 @@ details[open] .chev { transform: rotate(90deg); }
   .chips-row { min-height: 28px; }
   .topbar { padding-top: calc(4px + env(safe-area-inset-top)); padding-bottom: 2px; }
   .tab { padding: 6px 4px 5px; }
+}
+
+/* ============================================================
+   Themes. Amber is the :root default above. Each block overrides
+   the shared variables; canvas palettes are swapped in app.js.
+   ============================================================ */
+
+[data-theme="msc"] {
+  --bg: #030B1A;
+  --trace-rgb: 0, 163, 224;
+  --marker-rgb: 156, 201, 255;
+  --panel: #0A1730;
+  --panel-deep: #061228;
+  --line: #1A2C52;
+  --trace: #00A3E0;
+  --marker: #9CC9FF;
+  --text: #EAF2FF;
+  --muted: #93A3C4;
+  --danger: #FF3333;
+}
+
+[data-theme="mojave"] {
+  --bg: #020D06;
+  --trace-rgb: 51, 255, 102;
+  --marker-rgb: 181, 255, 201;
+  --panel: #04140A;
+  --panel-deep: #020D06;
+  --line: #0E2A18;
+  --trace: #33FF66;
+  --marker: #B5FFC9;
+  --text: #C9FFDC;
+  --muted: #4E8F66;
+  --danger: #FF6B5F;
+}
+
+/* collapsible panel summary (FRF) */
+
+.collapse-summary {
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.collapse-summary::-webkit-details-marker { display: none; }
+
+.collapse-summary .chev { margin-right: 8px; }
+
+.frf-body {
+  padding: 10px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.frf-plot {
+  height: 170px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
 }

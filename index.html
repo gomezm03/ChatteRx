@@ -220,6 +220,21 @@
     </div>
   </section>
 
+  <!-- Tool-point FRF: receptance from the mode tables, live -->
+  <section class="panel form-panel">
+    <details class="more frf-details" id="frfDetails" open>
+      <summary class="panel-head collapse-summary">
+        <span class="panel-title"><span class="chev">▸</span>FRF — TOOL POINT</span>
+        <span class="panel-note">Re &amp; Im (µm/N)</span>
+      </summary>
+      <div class="frf-body">
+        <div class="plot-body frf-plot"><canvas id="frfRe" class="sim-canvas"></canvas></div>
+        <div class="plot-body frf-plot"><canvas id="frfIm" class="sim-canvas"></canvas></div>
+        <p class="form-note" id="frfNote" hidden>no modes — rigid tool</p>
+      </div>
+    </details>
+  </section>
+
   <p class="error" id="simError" hidden></p>
 
   <button id="runSimBtn" class="btn-main btn-start">RUN SIMULATION</button>
@@ -287,6 +302,21 @@
 <!-- ======================= SETTINGS TAB ======================= -->
 <section class="tab-panel tab-sim" id="tab-settings" hidden>
 <div class="sim-scroll">
+
+  <section class="panel form-panel">
+    <div class="panel-head"><span class="panel-title">APPEARANCE</span></div>
+    <div class="form-body">
+      <div class="form-grid">
+        <label class="span-2"><span class="lab">Theme</span>
+          <select id="setTheme">
+            <option value="amber" selected>Amber (default)</option>
+            <option value="msc">MSC</option>
+            <option value="mojave">Mojave</option>
+          </select></label>
+      </div>
+      <p class="form-note">Applies to the whole app, including plot traces and the spectrogram colormap.</p>
+    </div>
+  </section>
 
   <section class="panel form-panel">
     <div class="panel-head"><span class="panel-title">SPECTRUM DISPLAY — ANALYZE</span></div>
