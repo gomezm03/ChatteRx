@@ -927,3 +927,22 @@ details[open] .chev { transform: rotate(90deg); }
   border-radius: 8px;
   overflow: hidden;
 }
+
+/* Px2dB preview */
+
+.px2-preview-wrap {
+  background: var(--panel-deep);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px;
+  display: flex;
+  justify-content: center;
+}
+
+.px2-preview {
+  display: block;
+  max-width: 100%;
+  max-height: 180px;
+}
+
+.px2-file { display: inline-flex; align-items: center; user-select: none; }

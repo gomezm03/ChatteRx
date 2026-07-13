@@ -2559,6 +2559,249 @@
     if (document.hidden && mode === "live") stopLive(false);
   });
 
+  // ============================================================
+  // PX2DB — image → spectrogram sound (Settings tab)
+  // Bright pixels become loud tones: rows map to frequency (top = high),
+  // columns to time, brightness to amplitude, with phase-continuous
+  // additive synthesis so tones never click between columns.
+  // ============================================================
+
+  const PX2_MAX_ROWS = 512;   // proportional cap only — aspect always preserved
+  const PX2_MAX_COLS = 1600;
+  const PX2_FLOOR_HZ = 20;    // rows mapping below this stay silent
+
+  let px2Src = null;    // offscreen canvas of the flattened original image
+  let px2Bitmap = null; // { data: Float32Array, rows, cols } processed
+  let px2Audio = null;  // Float32Array @ AUDIO_RATE
+  let px2Busy = false;
+  let px2PlayCtx = null;
+  let px2PlaySource = null;
+
+  const px2Note = $("px2Note");
+  const px2Gen = $("px2Gen");
+  const px2Actions = $("px2Actions");
+
+  function px2LoadFile(file) {
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      // flatten any transparency onto black so alpha can't swallow dark art
+      const cv = document.createElement("canvas");
+      cv.width = img.naturalWidth;
+      cv.height = img.naturalHeight;
+      const cx = cv.getContext("2d");
+      cx.fillStyle = "#000";
+      cx.fillRect(0, 0, cv.width, cv.height);
+      cx.drawImage(img, 0, 0);
+      px2Src = cv;
+      px2Audio = null;
+      px2Actions.hidden = true;
+      px2Process();
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      px2Note.textContent = "Could not read that image — try a PNG or JPG.";
+    };
+    img.src = url;
+  }
+
+  $("px2File").addEventListener("change", (e) => {
+    px2LoadFile(e.target.files && e.target.files[0]);
+    e.target.value = "";
+  });
+  $("px2Cam").addEventListener("change", (e) => {
+    px2LoadFile(e.target.files && e.target.files[0]);
+    e.target.value = "";
+  });
+
+  // grayscale → auto/manual invert → border trim → proportional cap
+  function px2Process() {
+    if (!px2Src) return;
+    let w = px2Src.width;
+    let h = px2Src.height;
+
+    // proportional cap FIRST (uniform scale, never squeezed)
+    const s = Math.min(1, PX2_MAX_ROWS / h, PX2_MAX_COLS / w);
+    if (s < 1) {
+      const cv = document.createElement("canvas");
+      cv.width = Math.max(1, Math.round(w * s));
+      cv.height = Math.max(1, Math.round(h * s));
+      cv.getContext("2d").drawImage(px2Src, 0, 0, cv.width, cv.height);
+      w = cv.width;
+      h = cv.height;
+      var srcCv = cv;
+    } else {
+      var srcCv = px2Src;
+    }
+
+    const px = srcCv.getContext("2d").getImageData(0, 0, w, h).data;
+    let arr = new Float32Array(w * h);
+    for (let i = 0; i < w * h; i++) {
+      const o = i * 4;
+      arr[i] = (0.299 * px[o] + 0.587 * px[o + 1] + 0.114 * px[o + 2]) / 255;
+    }
+
+    // invert: auto samples the border to detect dark-on-light art
+    const invMode = $("px2Invert").value;
+    let invert = invMode === "on";
+    if (invMode === "auto") {
+      const border = [];
+      for (let x = 0; x < w; x++) { border.push(arr[x], arr[(h - 1) * w + x]); }
+      for (let y = 0; y < h; y++) { border.push(arr[y * w], arr[y * w + w - 1]); }
+      border.sort((p, q) => p - q);
+      invert = border[border.length >> 1] > 0.5;
+    }
+    if (invert) for (let i = 0; i < arr.length; i++) arr[i] = 1 - arr[i];
+
+    // trim uniform dark margin
+    let r0 = 0, r1 = h - 1, c0 = 0, c1 = w - 1;
+    const lit = (r, c) => arr[r * w + c] > 0.08;
+    const rowLit = (r) => { for (let c = 0; c < w; c++) if (lit(r, c)) return true; return false; };
+    const colLit = (c) => { for (let r = 0; r < h; r++) if (lit(r, c)) return true; return false; };
+    while (r0 < r1 && !rowLit(r0)) r0++;
+    while (r1 > r0 && !rowLit(r1)) r1--;
+    while (c0 < c1 && !colLit(c0)) c0++;
+    while (c1 > c0 && !colLit(c1)) c1--;
+    const rows = r1 - r0 + 1;
+    const cols = c1 - c0 + 1;
+    const data = new Float32Array(rows * cols);
+    let maxV = 0;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const v = arr[(r + r0) * w + (c + c0)];
+        data[r * cols + c] = v;
+        if (v > maxV) maxV = v;
+      }
+    }
+    px2Bitmap = { data, rows, cols };
+    px2DrawPreview();
+    px2Gen.disabled = false;
+    px2Note.textContent =
+      maxV < 0.05
+        ? "Warning: the image is almost entirely dark — the sound will be near-silent. Try Invert."
+        : rows + "×" + cols + " px ready. Bright pixels become loud tones.";
+  }
+
+  $("px2Invert").addEventListener("change", () => {
+    if (px2Src) { px2Audio = null; px2Actions.hidden = true; px2Process(); }
+  });
+
+  function px2DrawPreview() {
+    const wrap = $("px2PreviewWrap");
+    const cv = $("px2Preview");
+    wrap.hidden = false;
+    const { data, rows, cols } = px2Bitmap;
+    cv.width = cols;
+    cv.height = rows;
+    const cx = cv.getContext("2d");
+    const img = cx.createImageData(cols, rows);
+    for (let i = 0; i < rows * cols; i++) {
+      const v = Math.round(data[i] * 255);
+      const o = i * 4;
+      img.data[o] = v; img.data[o + 1] = v; img.data[o + 2] = v; img.data[o + 3] = 255;
+    }
+    cx.putImageData(img, 0, 0);
+  }
+
+  // chunked additive synthesis with continuous phase
+  $("px2Gen").addEventListener("click", async () => {
+    if (!px2Bitmap || px2Busy) return;
+    px2Busy = true;
+    px2Gen.disabled = true;
+    px2StopPlayback();
+    px2Actions.hidden = true;
+    const prog = $("px2Progress");
+    const fill = $("px2ProgressFill");
+    prog.hidden = false;
+    fill.style.width = "0%";
+
+    const { data, rows, cols } = px2Bitmap;
+    const fMax = Number($("px2Range").value);
+    const dur = clamp(Number($("px2Dur").value) || 5, 1, 20);
+    const spc = Math.max(1, Math.floor((AUDIO_RATE * dur) / cols));
+    const total = spc * cols;
+    const audio = new Float32Array(total);
+
+    // row → frequency: top row = fMax, linear down toward 0; sub-floor rows silent
+    const freq = new Float32Array(rows);
+    const wStep = new Float32Array(rows);   // rad per sample
+    const dPhase = new Float32Array(rows);  // rad per column
+    for (let r = 0; r < rows; r++) {
+      const f = fMax * (rows > 1 ? 1 - r / (rows - 1) : 1);
+      freq[r] = f;
+      wStep[r] = (2 * Math.PI * f) / AUDIO_RATE;
+      dPhase[r] = wStep[r] * spc;
+    }
+    const phase = new Float32Array(rows);
+
+    const CHUNK = 24;
+    for (let cStart = 0; cStart < cols; cStart += CHUNK) {
+      const cEnd = Math.min(cols, cStart + CHUNK);
+      for (let c = cStart; c < cEnd; c++) {
+        const base = c * spc;
+        for (let r = 0; r < rows; r++) {
+          const amp = data[r * cols + c];
+          if (amp > 0.02 && freq[r] >= PX2_FLOOR_HZ) {
+            const ph = phase[r];
+            const w2 = wStep[r];
+            for (let sIdx = 0; sIdx < spc; sIdx++) {
+              audio[base + sIdx] += amp * Math.sin(ph + w2 * sIdx);
+            }
+          }
+        }
+        for (let r = 0; r < rows; r++) {
+          phase[r] = (phase[r] + dPhase[r]) % (2 * Math.PI);
+        }
+      }
+      fill.style.width = ((cEnd / cols) * 100).toFixed(1) + "%";
+      await nextFrame();
+    }
+
+    normalizePeak(audio, 0.85);
+    px2Audio = audio;
+    prog.hidden = true;
+    px2Actions.hidden = false;
+    px2Gen.disabled = false;
+    px2Busy = false;
+    px2Note.textContent =
+      (total / AUDIO_RATE).toFixed(1) + " s of sound ready — play it, or open it in the Analyzer to see the image in the spectrogram.";
+  });
+
+  $("px2Play").addEventListener("click", async () => {
+    if (!px2Audio) return;
+    if (px2PlaySource) { px2StopPlayback(); return; }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!px2PlayCtx) px2PlayCtx = new AC();
+    if (px2PlayCtx.state === "suspended") await px2PlayCtx.resume();
+    const buf = px2PlayCtx.createBuffer(1, px2Audio.length, AUDIO_RATE);
+    buf.copyToChannel(px2Audio, 0);
+    px2PlaySource = px2PlayCtx.createBufferSource();
+    px2PlaySource.buffer = buf;
+    px2PlaySource.connect(px2PlayCtx.destination);
+    px2PlaySource.onended = () => px2StopPlayback();
+    px2PlaySource.start();
+    $("px2Play").textContent = "■ STOP";
+  });
+
+  function px2StopPlayback() {
+    if (px2PlaySource) {
+      px2PlaySource.onended = null;
+      try { px2PlaySource.stop(); } catch (e) {}
+      px2PlaySource = null;
+    }
+    $("px2Play").textContent = "▶ PLAY";
+  }
+
+  $("px2Send").addEventListener("click", async () => {
+    if (!px2Audio) return;
+    px2StopPlayback();
+    if (mode === "live") stopLive(true);
+    switchTab("analyze");
+    await openInReview(new Float32Array(px2Audio), AUDIO_RATE);
+  });
+
   // ---------- iOS install hint ----------
   (function iosHint() {
     const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);

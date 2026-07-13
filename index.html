@@ -434,6 +434,51 @@
     </div>
   </section>
 
+
+  <!-- Px2dB: image → spectrogram sound -->
+  <section class="panel form-panel">
+    <div class="panel-head">
+      <span class="panel-title">PX2DB</span>
+      <span class="panel-note">image → sound</span>
+    </div>
+    <div class="form-body">
+      <div class="form-actions">
+        <label class="mini-btn px2-file" role="button" tabindex="0">OPEN PHOTO
+          <input type="file" id="px2File" accept="image/*" hidden></label>
+        <label class="mini-btn px2-file" role="button" tabindex="0">USE CAMERA
+          <input type="file" id="px2Cam" accept="image/*" capture="environment" hidden></label>
+      </div>
+      <div class="px2-preview-wrap" id="px2PreviewWrap" hidden>
+        <canvas id="px2Preview" class="px2-preview"></canvas>
+      </div>
+      <div class="form-grid">
+        <label><span class="lab">Range</span>
+          <select id="px2Range">
+            <option value="2000">0–2 kHz</option>
+            <option value="5000" selected>0–5 kHz</option>
+            <option value="10000">0–10 kHz</option>
+          </select></label>
+        <label><span class="lab">Duration <span class="unit">(s)</span></span>
+          <input id="px2Dur" type="number" step="any" min="1" max="20" inputmode="decimal" value="5"></label>
+        <label><span class="lab">Invert</span>
+          <select id="px2Invert">
+            <option value="auto" selected>Auto</option>
+            <option value="on">On</option>
+            <option value="off">Off</option>
+          </select></label>
+      </div>
+      <p class="form-note" id="px2Note">Open a photo or use the camera; bright pixels become loud tones. Match the range here with the Analyze range selector and the image fills the spectrogram exactly.</p>
+      <button id="px2Gen" class="mini-btn" disabled>GENERATE SOUND</button>
+      <div class="progress" id="px2Progress" hidden>
+        <div class="progress-fill" id="px2ProgressFill"></div>
+      </div>
+      <div class="form-actions" id="px2Actions" hidden>
+        <button id="px2Play" class="mini-btn mini-play">▶ PLAY</button>
+        <button id="px2Send" class="mini-btn mini-send">OPEN IN ANALYZER →</button>
+      </div>
+    </div>
+  </section>
+
   <button id="resetSettingsBtn" class="btn-main btn-new">RESET TO DEFAULTS</button>
 
 </div>
