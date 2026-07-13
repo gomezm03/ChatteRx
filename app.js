@@ -30,6 +30,7 @@
     theme: "amber",   // amber | msc | mojave
     simScale: "lin",  // sim FFT: "lin" | "db" | "psd"
     soundSrc: "xt",   // sim sound: xt | yt | dres | fx | fy | fres
+    toothDots: "on",  // once-per-tooth sample markers on the signal plot
     showComp: "off",  // add Fx/Fy/x/y to the sim channel dropdown
   };
   let settings = Object.assign({}, DEFAULT_SETTINGS);
@@ -67,6 +68,7 @@
       trace: "#FFB24D", traceRGB: "255, 178, 77",
       marker: "#7FD8E8", markerRGB: "127, 216, 232",
       grid: "rgba(44, 51, 62, 0.85)", label: "#8A919C",
+      red: "#E86A5F",
       themeColor: "#14171C",
       heat: (t) => { // original piecewise ember ramp — byte-identical to pre-theme app
         if (t < 0.35) { const k = t / 0.35; return [16 + 30 * k, 20 + 14 * k, 26 + 6 * k]; }
@@ -78,6 +80,7 @@
       trace: "#00A3E0", traceRGB: "0, 163, 224",     // Bright Blue leads the traces
       marker: "#FFFFFF", markerRGB: "255, 255, 255", // white markers on the blue field
       grid: "rgba(26, 44, 82, 0.9)", label: "#93A3C4",
+      red: "#FF3333",
       themeColor: "#030B1A",
       heat: ramp(["#000000", "#012169", "#0057B8", "#00A3E0", "#FFFFFF"]),
     },
@@ -85,6 +88,7 @@
       trace: "#33FF66", traceRGB: "51, 255, 102",    // single green phosphor
       marker: "#B5FFC9", markerRGB: "181, 255, 201",
       grid: "rgba(14, 42, 24, 0.95)", label: "#4E8F66",
+      red: "#FF6B5F",
       themeColor: "#020D06",
       heat: ramp(["#000000", "#02220F", "#0A7A33", "#33FF66", "#EAFFF2"]),
     },
@@ -1683,6 +1687,37 @@
       const peak = Math.max(Math.abs(info.hi), Math.abs(info.lo));
       forceStats.textContent =
         "peak " + (isDisp ? fmtDisp(peak) : fmtForce(peak));
+      if (settings.toothDots === "on") drawToothDots(info, ch.data);
+    }
+  }
+
+  // Once-per-tooth synchronous samples over the signal trace — the visual
+  // form of the stability metric: stable cuts repeat (dots stack at one
+  // level per tooth), chatter scatters them.
+  function drawToothDots(info, data) {
+    if (!simRunMeta || !simRaw) return;
+    const spt = (simRaw.fs * 60) / (simRunMeta.omega * simRunMeta.Nt); // samples per tooth period
+    if (!(spt > 1)) return;
+    const v = plotViews.signal;
+    const n = data.length;
+    const i0 = Math.floor(v.a * (n - 1));
+    const i1 = Math.max(i0 + 1, Math.ceil(v.b * (n - 1)));
+    const win = i1 - i0;
+    const yRange = info.hi - info.lo;
+    const ctx = forcePlot.getContext("2d");
+    ctx.fillStyle = PAL.red;
+    const kStart = Math.ceil(i0 / spt);
+    const kEnd = Math.floor(i1 / spt);
+    // cap the draw count for extreme zoom-out; stride keeps them synchronous
+    const step = Math.max(1, Math.ceil((kEnd - kStart) / 1500));
+    for (let k = kStart; k <= kEnd; k += step) {
+      const idx = Math.round(k * spt);
+      if (idx < i0 || idx > i1) continue;
+      const x = info.L + ((idx - i0) / win) * info.pw;
+      const y = info.T + (1 - (data[idx] - info.lo) / yRange) * info.ph;
+      ctx.beginPath();
+      ctx.arc(x, y, 2.4, 0, 2 * Math.PI);
+      ctx.fill();
     }
   }
 
@@ -2438,6 +2473,7 @@
     { id: "setTheme", key: "theme", parse: (v) => v },
     { id: "setSimScale", key: "simScale", parse: (v) => v },
     { id: "setSoundSrc", key: "soundSrc", parse: (v) => v },
+    { id: "setToothDots", key: "toothDots", parse: (v) => v },
     { id: "setShowComp", key: "showComp", parse: (v) => v },
   ];
 
