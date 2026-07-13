@@ -2735,6 +2735,7 @@
       dPhase[r] = wStep[r] * spc;
     }
     const phase = new Float32Array(rows);
+    const prevAmp = new Float32Array(rows); // ramps in from silence on column 0
 
     const CHUNK = 24;
     for (let cStart = 0; cStart < cols; cStart += CHUNK) {
@@ -2742,14 +2743,19 @@
       for (let c = cStart; c < cEnd; c++) {
         const base = c * spc;
         for (let r = 0; r < rows; r++) {
-          const amp = data[r * cols + c];
-          if (amp > 0.02 && freq[r] >= PX2_FLOOR_HZ) {
+          const a1 = data[r * cols + c];
+          const a0 = prevAmp[r];
+          // amplitude keyframes: interpolate a0 → a1 across the column so
+          // brightness changes never step discontinuously (no broadband click)
+          if ((a1 > 0.02 || a0 > 0.02) && freq[r] >= PX2_FLOOR_HZ) {
             const ph = phase[r];
             const w2 = wStep[r];
+            const da = (a1 - a0) / spc;
             for (let sIdx = 0; sIdx < spc; sIdx++) {
-              audio[base + sIdx] += amp * Math.sin(ph + w2 * sIdx);
+              audio[base + sIdx] += (a0 + da * sIdx) * Math.sin(ph + w2 * sIdx);
             }
           }
+          prevAmp[r] = a1;
         }
         for (let r = 0; r < rows; r++) {
           phase[r] = (phase[r] + dPhase[r]) % (2 * Math.PI);
@@ -2757,6 +2763,14 @@
       }
       fill.style.width = ((cEnd / cols) * 100).toFixed(1) + "%";
       await nextFrame();
+    }
+
+    // ramp the final column's tones out to silence (no end thump)
+    {
+      const base = (cols - 1) * spc;
+      for (let sIdx = 0; sIdx < spc; sIdx++) {
+        audio[base + sIdx] *= 1 - sIdx / spc;
+      }
     }
 
     normalizePeak(audio, 0.85);
