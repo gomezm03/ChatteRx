@@ -1321,7 +1321,7 @@
     const modesY = readModes(modeRowsY).map(toSI);
 
     persistSimInputs();
-    simRunMeta = { omega, Nt };
+    simRunMeta = { omega, Nt, stepsRev: SIM_STEPS_REV };
 
     simResults.hidden = true;
     stopSimPlayback();
@@ -1380,6 +1380,7 @@
       (simAudio.samples.length / AUDIO_RATE).toFixed(2) + " s";
     const ftooth = simRunMeta ? (simRunMeta.Nt * simRunMeta.omega) / 60 : 0;
     $("rFtooth").textContent = ftooth > 0 ? fmtHz(ftooth) : "–";
+    fillStabilityCards(msg.metric);
     simResults.hidden = false;
 
     // canvases need layout before they have a width
@@ -1390,6 +1391,92 @@
       drawSoundPlot(null);
       simResults.scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
+  }
+
+  // ---------- stability cards: verdict, self-differenced chatter freq ----------
+  // The simulation is exactly synchronous (stepsRev samples per revolution),
+  // so the per-rev self-difference y(n) = x(n) - x(n - Nrev) cancels ALL
+  // tooth-passing content with no interpolation. The residual's dominant
+  // peak inside the settings scan band is the chatter frequency.
+  const CHATTER_METRIC_UM = 1; // Tony's displacement criterion, usable as-is: the sim is calibrated
+
+  function fillStabilityCards(metric) {
+    const rV = $("rVerdict");
+    const rC = $("rChatter");
+    const rR = $("rResidual");
+    rV.classList.remove("danger");
+
+    const x = simRaw.xt;
+    const Nrev = simRunMeta.stepsRev;
+    const n = x.length;
+
+    // residual ratio: RMS(self-difference) / RMS(mean-removed original)
+    let ratioStr = "–";
+    let fcStr = "–";
+    if (n > 2 * Nrev) {
+      let mean = 0;
+      for (let i = Nrev; i < n; i++) mean += x[i];
+      mean /= n - Nrev;
+      let s0 = 0;
+      let sy = 0;
+      const y = new Float32Array(n - Nrev);
+      for (let i = Nrev; i < n; i++) {
+        const d = x[i] - x[i - Nrev];
+        y[i - Nrev] = d;
+        sy += d * d;
+        const c0 = x[i] - mean;
+        s0 += c0 * c0;
+      }
+      const rms0 = Math.sqrt(s0 / (n - Nrev));
+      const rmsy = Math.sqrt(sy / (n - Nrev));
+      if (rms0 > 1e-15) {
+        ratioStr = ((rmsy / rms0) * 100).toFixed(1) + " %";
+      }
+
+      const chatter = Number.isFinite(metric) && metric > CHATTER_METRIC_UM;
+      if (chatter) {
+        const fc = residualPeakHz(y, simRaw.fs);
+        if (fc > 0) fcStr = fmtHz(fc);
+        rV.textContent = "CHATTER";
+        rV.classList.add("danger");
+      } else {
+        rV.textContent = "STABLE";
+      }
+    } else {
+      rV.textContent = "–";
+    }
+    rC.textContent = fcStr;
+    rR.textContent = ratioStr;
+  }
+
+  // dominant non-DC peak of the self-differenced signal, restricted to the
+  // stability-analysis scan band from Settings
+  function residualPeakHz(y, fs2) {
+    const len = y.length;
+    let NF = 1 << Math.floor(Math.log2(Math.max(len, 256)));
+    NF = Math.min(NF, 1 << 20);
+    if (NF < 256) return 0;
+    const M = fftMachinery(NF);
+    const { fft, win, re, im } = M;
+    for (let i = 0; i < NF; i++) {
+      re[i] = y[i] * win[i];
+      im[i] = 0;
+    }
+    fft.transform(re, im);
+    const binHz = fs2 / NF;
+    const bLo = Math.max(2, Math.ceil(settings.scanMin / binHz));
+    const bHi = Math.min(NF / 2 - 1, Math.floor(settings.scanMax / binHz));
+    if (bHi <= bLo) return 0;
+    let best = bLo;
+    let bestP = -1;
+    for (let b = bLo; b <= bHi; b++) {
+      const p = re[b] * re[b] + im[b] * im[b];
+      if (p > bestP) {
+        bestP = p;
+        best = b;
+      }
+    }
+    return best * binHz;
   }
 
   // ---------- result plots ----------

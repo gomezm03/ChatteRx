@@ -689,6 +689,8 @@ details[open] .chev { transform: rotate(90deg); }
   color: var(--muted);
 }
 
+.result-value.danger { color: var(--danger); }
+
 .result-value {
   font-family: var(--mono);
   font-size: 17px;
