@@ -25,19 +25,20 @@
     maxPeaks: 5,
     thresh: 12,       // dB above adaptive floor
     minSep: 60,       // Hz between reported peaks
+    overlap: "50",    // STFT segment overlap %, Analyze (spectrogram + engine)
     scanMin: 100,     // Hz, periodic-sampling scan band (stability engine)
     scanMax: 10000,
     theme: "amber",   // amber | msc | mojave
     simScale: "lin",  // sim FFT: "lin" | "db" | "psd"
     soundSrc: "xt",   // sim sound: xt | yt | dres | fx | fy | fres
     toothDots: "on",  // once-per-tooth sample markers on the signal plot
+    fftSize: "auto",  // auto = largest 2^N the visible window supports
     showComp: "off",  // add Fx/Fy/x/y to the sim channel dropdown
   };
   let settings = Object.assign({}, DEFAULT_SETTINGS);
 
   const MAX_REC_SECONDS = 300;
   const FFT_SIZE_REC = 2048;
-  const HOP_REC = 1024;
   const STORE_MAX_HZ = 10000;
 
   const AUDIO_RATE = 48000;       // rate for simulation-rendered audio
@@ -489,8 +490,14 @@
     updateTimeLabel();
   }
 
+  function recHop() {
+    const ov = Number(settings.overlap) || 0; // 0 | 50 | 75
+    return Math.max(1, Math.round(FFT_SIZE_REC * (1 - ov / 100)));
+  }
+
   async function computeGram() {
     const fft = new FFT(FFT_SIZE_REC);
+    const hop = recHop();
     const hzPerBin = recRate / FFT_SIZE_REC;
     const bins = Math.min(
       Math.floor(STORE_MAX_HZ / hzPerBin),
@@ -498,7 +505,7 @@
     );
     const cols = Math.max(
       1,
-      Math.floor((recBuffer.length - FFT_SIZE_REC) / HOP_REC) + 1
+      Math.floor((recBuffer.length - FFT_SIZE_REC) / hop) + 1
     );
     const data = new Uint8Array(cols * bins);
 
@@ -512,7 +519,7 @@
     const im = new Float32Array(FFT_SIZE_REC);
 
     for (let c = 0; c < cols; c++) {
-      const start = c * HOP_REC;
+      const start = c * hop;
       for (let i = 0; i < FFT_SIZE_REC; i++) {
         re[i] = (recBuffer[start + i] || 0) * win[i];
         im[i] = 0;
@@ -526,7 +533,7 @@
       if ((c & 63) === 0) await nextFrame();
     }
 
-    gram = { cols, bins, data, hzPerBin, hopSec: HOP_REC / recRate };
+    gram = { cols, bins, data, hzPerBin, hopSec: hop / recRate };
   }
 
   function dbToU8(db) {
@@ -1732,20 +1739,29 @@
     const i1 = Math.max(i0 + 1, Math.ceil(v.b * (n - 1)));
     const len = i1 - i0;
 
-    let NF = 16384;
-    while (NF > len && NF > 256) NF >>= 1;
+    // FFT length: Auto takes the largest power of two the visible window
+    // supports (full resolution, df = fs/NF); fixed sizes shrink honestly
+    // if the window can't supply them. Full-rate samples, no filtering.
+    const MAX_NF = 1 << 20;
+    let NF;
+    if (settings.fftSize === "auto") {
+      NF = 1 << Math.floor(Math.log2(Math.max(len, 256)));
+      NF = Math.min(NF, MAX_NF);
+    } else {
+      NF = Number(settings.fftSize) || 16384;
+      while (NF > len && NF > 256) NF >>= 1;
+    }
     if (NF < 256) return;
     const segs = Math.min(16, Math.max(1, Math.floor(len / NF)));
 
-    const fft = new FFT(NF);
-    const win = new Float32Array(NF);
-    for (let i = 0; i < NF; i++) {
-      win[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (NF - 1)));
-    }
+    const M = fftMachinery(NF);
+    const fft = M.fft;
+    const win = M.win;
     const norm = 2 / (NF * 0.5); // amplitude, Hann coherent gain 0.5
-    const re = new Float32Array(NF);
-    const im = new Float32Array(NF);
-    const pow = new Float64Array(NF / 2);
+    const re = M.re;
+    const im = M.im;
+    const pow = M.pow;
+    pow.fill(0);
 
     const stride = segs > 1 ? Math.floor((len - NF) / (segs - 1)) : 0;
     for (let s = 0; s < segs; s++) {
@@ -1792,6 +1808,24 @@
     if (fftCursorHz != null) {
       fftCursorHz = Math.min(fftCursorHz, (bins - 1) * binHz);
     }
+  }
+
+  const _fftCache = {};
+  function fftMachinery(NF) {
+    if (!_fftCache[NF]) {
+      const win = new Float32Array(NF);
+      for (let i = 0; i < NF; i++) {
+        win[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (NF - 1)));
+      }
+      _fftCache[NF] = {
+        fft: new FFT(NF),
+        win,
+        re: new Float32Array(NF),
+        im: new Float32Array(NF),
+        pow: new Float64Array(NF / 2),
+      };
+    }
+    return _fftCache[NF];
   }
 
   function drawFFTPlot() {
@@ -2468,12 +2502,14 @@
     { id: "setMaxPeaks", key: "maxPeaks", parse: (v) => clamp(Math.round(Number(v) || 5), 1, 8) },
     { id: "setThresh", key: "thresh", parse: (v) => clamp(Number(v) || 12, 3, 40) },
     { id: "setMinSep", key: "minSep", parse: (v) => Math.max(0, Number(v) || 0) },
+    { id: "setOverlap", key: "overlap", parse: (v) => v },
     { id: "setScanMin", key: "scanMin", parse: (v) => Math.max(10, Number(v) || 10) },
     { id: "setScanMax", key: "scanMax", parse: (v) => Math.max(100, Number(v) || 100) },
     { id: "setTheme", key: "theme", parse: (v) => v },
     { id: "setSimScale", key: "simScale", parse: (v) => v },
     { id: "setSoundSrc", key: "soundSrc", parse: (v) => v },
     { id: "setToothDots", key: "toothDots", parse: (v) => v },
+    { id: "setFftSize", key: "fftSize", parse: (v) => v },
     { id: "setShowComp", key: "showComp", parse: (v) => v },
   ];
 
@@ -2482,12 +2518,28 @@
   }
 
   let appliedTheme = "amber";
+  let appliedOverlap = "50";
+
+  async function recomputeGramAndRedraw() {
+    if (!recBuffer) return;
+    processingEl.hidden = false;
+    await computeGram();
+    renderGramImage();
+    processingEl.hidden = true;
+    playhead = Math.min(playhead, duration());
+    drawTimeline();
+    drawReviewSpectrum();
+  }
 
   function applySettings() {
     saveJson(SETTINGS_KEY, settings);
     if (settings.theme !== appliedTheme) {
       appliedTheme = settings.theme;
       applyTheme(settings.theme);
+    }
+    if (settings.overlap !== appliedOverlap) {
+      appliedOverlap = settings.overlap;
+      if (mode === "review" && recBuffer) recomputeGramAndRedraw();
     }
     if (analyser) analyser.smoothingTimeConstant = settings.smooth;
     if (mode === "review") {
@@ -2524,6 +2576,7 @@
   buildChanOptions();
   restoreSimInputs();
   appliedTheme = settings.theme;
+  appliedOverlap = settings.overlap;
   applyTheme(settings.theme);
   requestAnimationFrame(() => {
     fitCanvas(specCanvas, specCtx, false);
