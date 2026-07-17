@@ -39,7 +39,9 @@ body {
   height: 100dvh;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto;      /* engages only when min-height floors overflow */
+  overflow-x: hidden;
+  overscroll-behavior-y: none;
 }
 
 @supports not (height: 100dvh) {
@@ -266,6 +268,13 @@ body {
   min-height: 60px;
   position: relative;
   background: var(--panel-deep);
+}
+
+.scope-canvas,
+.sim-canvas,
+.px2-preview {
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .scope-canvas {
@@ -815,6 +824,9 @@ details[open] .chev { transform: rotate(90deg); }
    ============================================================ */
 
 @media (min-width: 760px) and (min-height: 420px) {
+  .panel-spectrum { min-height: 280px; }
+  .panel-gram { min-height: 340px; }
+
   .tab-analyze {
     display: grid;
     grid-template-columns: minmax(300px, 0.9fr) 1.4fr;
