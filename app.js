@@ -80,17 +80,17 @@
     msc: {
       trace: "#00A3E0", traceRGB: "0, 163, 224",     // Bright Blue leads the traces
       marker: "#FFFFFF", markerRGB: "255, 255, 255", // white markers on the blue field
-      grid: "rgba(26, 44, 82, 0.9)", label: "#93A3C4",
+      grid: "rgba(44, 51, 62, 0.85)", label: "#8A919C",
       red: "#FF3333",
-      themeColor: "#030B1A",
+      themeColor: "#14171C",
       heat: ramp(["#000000", "#012169", "#0057B8", "#00A3E0", "#FFFFFF"]),
     },
     mojave: {
       trace: "#33FF66", traceRGB: "51, 255, 102",    // single green phosphor
       marker: "#B5FFC9", markerRGB: "181, 255, 201",
-      grid: "rgba(14, 42, 24, 0.95)", label: "#4E8F66",
+      grid: "rgba(44, 51, 62, 0.85)", label: "#8A919C",
       red: "#FF6B5F",
-      themeColor: "#020D06",
+      themeColor: "#14171C",
       heat: ramp(["#000000", "#02220F", "#0A7A33", "#33FF66", "#EAFFF2"]),
     },
   };
@@ -2675,17 +2675,79 @@
         if (v > maxV) maxV = v;
       }
     }
-    px2Bitmap = { data, rows, cols };
+    let out = data;
+    const lineMode = $("px2Line").value;
+    if (lineMode !== "off") {
+      out = px2LineArt(data, rows, cols, lineMode,
+        clamp(Number($("px2Strength").value) || 0.2, 0.05, 1));
+      maxV = 0;
+      for (let i = 0; i < out.length; i++) if (out[i] > maxV) maxV = out[i];
+    }
+    px2Bitmap = { data: out, rows, cols };
     px2DrawPreview();
     px2Gen.disabled = false;
+    let litCount = 0;
+    for (let i = 0; i < out.length; i++) if (out[i] > 0.02) litCount++;
     px2Note.textContent =
       maxV < 0.05
-        ? "Warning: the image is almost entirely dark — the sound will be near-silent. Try Invert."
-        : rows + "×" + cols + " px ready. Bright pixels become loud tones.";
+        ? "Warning: almost no lit pixels — try Invert, Line mode Off, or lower Edge strength."
+        : rows + "×" + cols + " px ready · " + litCount.toLocaleString() + " lit pixels.";
   }
 
-  $("px2Invert").addEventListener("change", () => {
-    if (px2Src) { px2Audio = null; px2Actions.hidden = true; px2Process(); }
+  // Sobel edge extraction: solid fills become thin contours. Far fewer lit
+  // pixels means far less correlated envelope motion at column boundaries —
+  // the second defence against vertical streaks, and what makes photos legible.
+  function px2LineArt(src, rows, cols, mode, strength) {
+    const at = (r, c) =>
+      src[clamp(r, 0, rows - 1) * cols + clamp(c, 0, cols - 1)];
+    const mag = new Float32Array(rows * cols);
+    let maxM = 0;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const gx =
+          -at(r - 1, c - 1) + at(r - 1, c + 1)
+          - 2 * at(r, c - 1) + 2 * at(r, c + 1)
+          - at(r + 1, c - 1) + at(r + 1, c + 1);
+        const gy =
+          -at(r - 1, c - 1) - 2 * at(r - 1, c) - at(r - 1, c + 1)
+          + at(r + 1, c - 1) + 2 * at(r + 1, c) + at(r + 1, c + 1);
+        const m = Math.hypot(gx, gy);
+        mag[r * cols + c] = m;
+        if (m > maxM) maxM = m;
+      }
+    }
+    if (maxM > 0) for (let i = 0; i < mag.length; i++) mag[i] /= maxM;
+    const edges = new Float32Array(rows * cols);
+    for (let i = 0; i < mag.length; i++) {
+      edges[i] = mag[i] >= strength ? mag[i] : 0;
+    }
+    if (mode === "thin") {
+      // non-max suppression: keep only 3×3 local maxima of the gradient
+      const out = new Float32Array(rows * cols);
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const v = edges[r * cols + c];
+          if (v <= 0) continue;
+          let mx = 0;
+          for (let dr = -1; dr <= 1; dr++) {
+            for (let dc = -1; dc <= 1; dc++) {
+              const w2 = edges[clamp(r + dr, 0, rows - 1) * cols + clamp(c + dc, 0, cols - 1)];
+              if (w2 > mx) mx = w2;
+            }
+          }
+          if (v >= mx - 1e-6) out[r * cols + c] = 1;
+        }
+      }
+      return out;
+    }
+    return edges;
+  }
+
+  ["px2Invert", "px2Line", "px2Strength"].forEach((id) => {
+    const ev = id === "px2Strength" ? "change" : "change";
+    $(id).addEventListener(ev, () => {
+      if (px2Src) { px2Audio = null; px2Actions.hidden = true; px2Process(); }
+    });
   });
 
   function px2DrawPreview() {

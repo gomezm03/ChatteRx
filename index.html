@@ -466,8 +466,16 @@
             <option value="on">On</option>
             <option value="off">Off</option>
           </select></label>
+        <label><span class="lab">Line mode</span>
+          <select id="px2Line">
+            <option value="outline" selected>Outline</option>
+            <option value="thin">Thin</option>
+            <option value="off">Off</option>
+          </select></label>
+        <label><span class="lab">Edge strength</span>
+          <input id="px2Strength" type="number" step="0.05" min="0.05" max="1" inputmode="decimal" value="0.2"></label>
       </div>
-      <p class="form-note" id="px2Note">Open a photo or use the camera; bright pixels become loud tones. Match the range here with the Analyze range selector and the image fills the spectrogram exactly.</p>
+      <p class="form-note" id="px2Note">Open a photo or use the camera. Outline mode traces edges — best for logos and photos; lower strength catches more lines. Match the range here with the Analyze range selector and the image fills the spectrogram exactly.</p>
       <button id="px2Gen" class="mini-btn" disabled>GENERATE SOUND</button>
       <div class="progress" id="px2Progress" hidden>
         <div class="progress-fill" id="px2ProgressFill"></div>
