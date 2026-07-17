@@ -238,8 +238,17 @@
         redrawStatic();
       });
     } else if (name === "sim") {
-      requestAnimationFrame(drawFRF);
+      requestAnimationFrame(() => {
+        drawFRF();
+        if (simRaw && !simResults.hidden) {
+          drawSignalPlot();
+          drawFFTPlot();
+          drawSoundPlot(simPlaySource ? currentSimPlayT() : null);
+        }
+      });
     }
+    document.body.dataset.tab = name;
+    window.scrollTo(0, 0);
   }
 
   tabBtns.forEach((b) =>
@@ -2983,6 +2992,7 @@
   restoreSimInputs();
   appliedTheme = settings.theme;
   appliedOverlap = settings.overlap;
+  document.body.dataset.tab = "analyze";
   applyTheme(settings.theme);
   requestAnimationFrame(() => {
     fitCanvas(specCanvas, specCtx, false);

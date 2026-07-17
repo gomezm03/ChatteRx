@@ -949,3 +949,77 @@ details[open] .chev { transform: rotate(90deg); }
 }
 
 .px2-file { display: inline-flex; align-items: center; user-select: none; }
+
+/* ============================================================
+   Desktop document flow: Simulate & Settings behave as pages
+   (natural height, root scroll, sticky tabs), while Analyze
+   stays a viewport-locked instrument. Phones unaffected.
+   ============================================================ */
+
+@media (min-width: 760px) {
+  body[data-tab="sim"],
+  body[data-tab="settings"] {
+    height: auto;
+    min-height: 100dvh;
+  }
+
+  body[data-tab="sim"] .tabs,
+  body[data-tab="settings"] .tabs {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: var(--bg);
+  }
+
+  body[data-tab="sim"] .app,
+  body[data-tab="settings"] .app {
+    min-height: 0;
+    flex: none;
+  }
+
+  body[data-tab="sim"] .tab-panel,
+  body[data-tab="settings"] .tab-panel {
+    min-height: 0;
+  }
+
+  body[data-tab="sim"] .sim-scroll,
+  body[data-tab="settings"] .sim-scroll {
+    flex: none;
+    overflow-y: visible;
+    min-height: 0;
+  }
+
+  /* two-column panel grids */
+  .sim-scroll {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    align-items: start;
+    padding: 14px 18px calc(18px + env(safe-area-inset-bottom));
+  }
+
+  .sim-scroll > .frf-details,
+  .sim-scroll > section:has(.frf-details),
+  .sim-scroll > .error,
+  .sim-scroll > .btn-main,
+  .sim-scroll > .progress,
+  .sim-scroll > #simResults,
+  .sim-scroll > .panel-span,
+  .sim-scroll > #resetSettingsBtn {
+    grid-column: 1 / -1;
+  }
+
+  /* results fill the width as a 2×2: signal | sound, FFT spanning */
+  #simResults .form-body {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  #simResults .result-grid,
+  #simResults .form-actions,
+  #simResults .form-note,
+  #simResults .plot-span {
+    grid-column: 1 / -1;
+  }
+}
